@@ -14,6 +14,13 @@ function Get-HHOperatorIdentity {
     param()
     $identities = [System.Collections.Generic.List[string]]::new()
 
+    if ($script:HHIsLinux) {
+        if ($env:USER) { $identities.Add($env:USER) }
+        try { $w = (& whoami 2>$null); if ($w) { $identities.Add($w.Trim()) } } catch { }
+        try { $id = (& id -un 2>$null); if ($id) { $identities.Add($id.Trim()) } } catch { }
+        return @($identities | Where-Object { $_ } | Select-Object -Unique)
+    }
+
     $user   = $env:USERNAME
     $domain = $env:USERDOMAIN
     if ($user)             { $identities.Add($user) }

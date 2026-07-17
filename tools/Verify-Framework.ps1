@@ -25,11 +25,16 @@ if (-not $ModuleRoot) {
     $ModuleRoot = Split-Path -Parent $here
 }
 
-# Every real collector - excluded so the framework runs stay fast and deterministic.
+# Every real collector (Windows + Linux) - excluded so the framework runs stay fast and
+# deterministic on whichever OS the verifier runs on.
 $script:RealCollectors = @(
+    # Windows
     'System','Process','Network','Autoruns','Services','ScheduledTasks','WmiPersistence',
     'Accounts','AuthEvents','EventLogs','Filesystem','DefenderState','BitsJobs','MemoryHints',
-    'Wireless','BrowserHistory'
+    'Wireless','BrowserHistory',
+    # Linux
+    'SystemdUnits','Cron','InitScripts','SshKeys','Sudoers','AuthLogs','ShellHistory',
+    'SuidSgid','KernelModules','PackageIntegrity','Containers'
 )
 
 function Assert-That {

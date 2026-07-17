@@ -3,14 +3,15 @@
 > Compromise-assessment & forensic-triage platform · **CGD-CA-DESIGN-001** · Cyber Gate Defense DFIR
 
 HAARIS-HUNTER is a modular, **authorization-gated**, chain-of-custody forensic collection
-framework for Windows. It re-imagines the collection value of
+framework for **Windows and Linux**. It re-imagines the collection value of
 [Live-Forensicator](https://github.com/Johnng007/Live-Forensicator) on the HAARIS-HUNTER
 architecture: instead of a monolithic script that produces an HTML report, every run
 emits a **hashed, normalized JSON evidence bundle** that is the ingestion contract for the
 downstream *Normalize → Detect → Risk → Report → Central platform* pipeline.
 
-Phase 1 delivers the **Core Framework** and the **Windows collectors**. It runs on
-**Windows PowerShell 5.1 and PowerShell 7+** (no install required on stock Windows hosts).
+Phase 1 delivers the **Core Framework** and the **Windows collectors** (Windows PowerShell 5.1
+and PowerShell 7+, no install required on stock Windows hosts). Phase 1.5 adds the **Linux
+collectors** on the same framework via cross-platform PowerShell 7.
 
 ## Why not just use Live-Forensicator?
 
@@ -65,9 +66,41 @@ ATT&CK where it is cheap.
 | Wireless | Wi-Fi profiles (keys **only in `full` mode**) | T1552.001 |
 | BrowserHistory | raw DB capture + extracted URL/domain IOC surface (**`full` mode only**) | T1217 |
 
+## Linux collectors (Phase 1.5)
+
+Run under PowerShell 7 on Linux (`pwsh`), ideally as root for full coverage. The Core Framework,
+evidence schema, chain-of-custody, and reporting are shared; only the OS-specific collectors and a
+few host/time/operator branches differ. The module loads **only** the current OS's collectors.
+
+| Collector | Artifacts | ATT&CK |
+|---|---|---|
+| System | /etc/os-release, kernel, uptime, boot time | — |
+| Process | /proc processes + hash + **deleted-executable** detection | T1059.004, T1070.004 |
+| Network | ss sockets + iface/route/ARP, iptables/nft, hosts/resolv.conf | T1565.001 |
+| SystemdUnits | service unit files + timers + /etc unit files | T1543.002, T1053.006 |
+| Cron | /etc/crontab, cron.d/daily/…, per-user crontabs | T1053.003 |
+| InitScripts | rc.local, init.d, profile.d, per-user shell rc | T1037, T1546.004 |
+| SshKeys | authorized_keys (per key) + sshd_config | T1098.004 |
+| Accounts | passwd/group + **shadow metadata only** (no hashes) | T1136, T1078 |
+| Sudoers | /etc/sudoers(.d) + **NOPASSWD** flagging | T1548.003 |
+| AuthLogs | journald/auth.log/secure — failed/accepted/sudo (capped) | T1078, T1110 |
+| ShellHistory | bash/zsh/python history (**`full` mode only**) | T1552.003 |
+| SuidSgid | setuid/setgid files + file capabilities | T1548.001 |
+| KernelModules | /proc/modules + taint state | T1547.006 |
+| PackageIntegrity | rpm -Va / debsums / dpkg --verify | T1565.001 |
+| Filesystem | tmp/var-tmp/dev-shm + world-writable files | T1204, T1222 |
+| MemoryHints | /proc/meminfo, swaps, kcore (pointers, not capture) | — |
+| Containers | docker/podman ps | T1610, T1611 |
+
+> **Field-test status:** Linux collectors are built and parse-clean but were authored on a Windows
+> host with no Linux runtime available, so they are **not yet functionally verified**. Validate on a
+> Linux host: `sudo pwsh -File tools/Invoke-Example.ps1 -Profile standard` (runs collection and
+> re-verifies the bundle). The Core Framework verifier (`tools/Verify-Framework.ps1`) runs on Linux
+> too and is OS-neutral.
+
 ## Requirements
 
-- Windows PowerShell 5.1 **or** PowerShell 7+
+- Windows PowerShell 5.1 **or** PowerShell 7+ (Linux needs PowerShell 7 / `pwsh`)
 - **Run elevated (Administrator)** for full coverage — `AuthEvents` (Security log), `Prefetch`,
   and some Defender/WMI data require it; without elevation those collectors degrade gracefully
   and record an explicit note rather than failing the run.
@@ -158,14 +191,16 @@ src/Core/                     EvidenceSchema, Configuration, AuthorizationGate, 
                               Statistics, ChainOfCustody, EvidenceWriter
 src/Reporting/                JSON bundle writer + HTML report
 src/Collectors/Windows/       16 collectors + _CollectorHelpers.ps1 (see that folder's README)
+src/Collectors/Linux/         17 collectors + _LinuxHelpers.ps1 (loaded only on Linux)
 tests/                        Pester 5 tests
-tools/Verify-Framework.ps1    dependency-free verification
+tools/Verify-Framework.ps1    dependency-free verification (OS-neutral)
+tools/Invoke-Example.ps1      cross-platform example / field-test runner
 ```
 
 ## Roadmap
 
 - **Phase 1 (this repo)** — Core Framework + Windows collectors. ✅ Done.
-- **Phase 1.5** — Linux collectors on the same framework (PowerShell 7 cross-platform).
+- **Phase 1.5** — Linux collectors on the same framework (PowerShell 7). ✅ Built (field-test pending on a Linux host).
 - **Phase 2** — Detection engine consuming the JSON bundle (IOC, Sigma, YARA, cross-artifact
   DSL, ATT&CK mapping, C2/ransomware/lateral/cred-abuse).
 - **Phase 3+** — Correlation/dedup → Risk engine → Central platform (ingestion API,

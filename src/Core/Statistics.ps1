@@ -5,10 +5,15 @@ function Get-HostMetadata {
     .SYNOPSIS
         Stable identity + OS facts for the host under examination. Embedded in every
         evidence record and the manifest so provenance survives outside the bundle.
+        Dispatches by platform (Windows / Linux / other).
     #>
     [CmdletBinding()]
     param()
+    if ($script:HHIsLinux) { return Get-HHLinuxHostMetadata }
+    return Get-HHWindowsHostMetadata
+}
 
+function Get-HHWindowsHostMetadata {
     $hostname = try { [System.Net.Dns]::GetHostName() } catch { $env:COMPUTERNAME }
 
     $fqdn = $hostname
@@ -40,6 +45,7 @@ function Get-HostMetadata {
     }
 
     [ordered]@{
+        platform         = 'Windows'
         hostname         = $hostname
         fqdn             = $fqdn
         host_id          = $hostId
@@ -48,6 +54,59 @@ function Get-HostMetadata {
         os_build         = if ($os) { $os.BuildNumber } else { $null }
         domain           = if ($cs) { $cs.Domain } else { $env:USERDNSDOMAIN }
         is_domain_joined = if ($cs) { [bool]$cs.PartOfDomain } else { $null }
+        ips              = $ips
+        collected_at_utc = [DateTime]::UtcNow.ToString('o')
+    }
+}
+
+function Get-HHLinuxHostMetadata {
+    $hostname = try { [System.Net.Dns]::GetHostName() } catch { $env:HOSTNAME }
+
+    $fqdn = $hostname
+    try { $f = (& hostname --fqdn 2>$null); if ($LASTEXITCODE -eq 0 -and $f) { $fqdn = $f.Trim() } } catch { }
+
+    # machine-id is the stable host identifier on systemd Linux.
+    $hostId = $null
+    foreach ($p in '/etc/machine-id', '/var/lib/dbus/machine-id') {
+        try { if (Test-Path -LiteralPath $p) { $hostId = (Get-Content -LiteralPath $p -Raw -ErrorAction Stop).Trim(); break } } catch { }
+    }
+
+    # Distro name/version from /etc/os-release.
+    $osName = $null; $osVer = $null
+    try {
+        if (Test-Path -LiteralPath '/etc/os-release') {
+            foreach ($line in (Get-Content -LiteralPath '/etc/os-release' -ErrorAction Stop)) {
+                if ($line -match '^PRETTY_NAME="?(.*?)"?$') { $osName = $Matches[1] }
+                elseif ($line -match '^VERSION_ID="?(.*?)"?$') { $osVer = $Matches[1] }
+            }
+        }
+    } catch { }
+    $kernel = $null
+    try { $kernel = (& uname -r 2>$null); if ($kernel) { $kernel = $kernel.Trim() } } catch { }
+
+    $ips = @()
+    try {
+        $out = & hostname -I 2>$null
+        if ($LASTEXITCODE -eq 0 -and $out) { $ips = @(($out -split '\s+') | Where-Object { $_ -and $_ -ne '127.0.0.1' }) }
+    } catch { }
+    if (-not $ips -or $ips.Count -eq 0) {
+        try {
+            $ips = @([System.Net.Dns]::GetHostAddresses($hostname) |
+                Where-Object { $_.AddressFamily -eq 'InterNetwork' -and $_.ToString() -ne '127.0.0.1' } |
+                ForEach-Object { $_.ToString() } | Select-Object -Unique)
+        } catch { }
+    }
+
+    [ordered]@{
+        platform         = 'Linux'
+        hostname         = $hostname
+        fqdn             = $fqdn
+        host_id          = $hostId
+        os               = if ($osName) { $osName } else { 'Linux' }
+        os_version       = $osVer
+        os_build         = $kernel
+        domain           = $null
+        is_domain_joined = $null
         ips              = $ips
         collected_at_utc = [DateTime]::UtcNow.ToString('o')
     }

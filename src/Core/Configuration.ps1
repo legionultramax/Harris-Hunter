@@ -99,14 +99,21 @@ function Get-HHConfiguration {
     $engagement  = ConvertFrom-HHJsonFile -Path $EngagementFile
     Test-HHEngagement -Engagement $engagement
 
-    $profileName = if ($Profile) { $Profile } else { $profileData['default_profile'] }
-    if (-not $profileData['profiles'].ContainsKey($profileName)) {
-        throw "Unknown profile '$profileName'. Available: $($profileData['profiles'].Keys -join ', ')"
+    # Select the collector set for the current OS. macOS shares the linux set for now.
+    $osKey = if ($script:HHIsLinux -or $script:HHIsMacOS) { 'linux' } else { 'windows' }
+    if (-not $profileData.ContainsKey($osKey)) {
+        throw "Profile file has no '$osKey' section."
+    }
+    $osProfiles = $profileData[$osKey]
+
+    $profileName = if ($Profile) { $Profile } else { $osProfiles['default_profile'] }
+    if (-not $osProfiles['profiles'].ContainsKey($profileName)) {
+        throw "Unknown $osKey profile '$profileName'. Available: $($osProfiles['profiles'].Keys -join ', ')"
     }
 
     # Resolve collectors: profile set, plus Include, minus Exclude (de-duped, order-preserving).
     $collectors = [System.Collections.Generic.List[string]]::new()
-    foreach ($c in @($profileData['profiles'][$profileName]) + @($Include)) {
+    foreach ($c in @($osProfiles['profiles'][$profileName]) + @($Include)) {
         if ($c -and ($collectors -notcontains $c)) { $collectors.Add($c) }
     }
     if ($Exclude.Count -gt 0) {

@@ -8,19 +8,30 @@ $ErrorActionPreference = 'Stop'
 
 $script:HHModuleRoot = $PSScriptRoot
 
-# Load order matters: Core defines the primitives every collector/report depends on.
-$loadAreas = @('src/Core', 'src/Collectors', 'src/Reporting')
+# NB: dot-source at module top level (via the pipeline). Wrapping this in a named function
+# would trap the definitions in that function's scope instead of the module scope.
 
-foreach ($area in $loadAreas) {
-    $areaPath = Join-Path $script:HHModuleRoot $area
-    if (Test-Path -LiteralPath $areaPath) {
-        Get-ChildItem -LiteralPath $areaPath -Recurse -Filter '*.ps1' |
-            Sort-Object FullName |
-            ForEach-Object {
-                . $_.FullName
-            }
-    }
+# 1. Core first - defines the primitives (incl. platform detection) everything depends on.
+Get-ChildItem -LiteralPath (Join-Path $script:HHModuleRoot 'src/Core') -Recurse -Filter '*.ps1' -ErrorAction SilentlyContinue |
+    Sort-Object FullName | ForEach-Object { . $_.FullName }
+
+# 2. Load ONLY the current OS's collectors. Windows and Linux both define Collect-Process,
+#    Collect-Network, etc.; loading both would collide. Platform is known now that Core loaded.
+$collectorSub = switch (Get-HHPlatform) {
+    'Windows' { 'Windows' }
+    'Linux'   { 'Linux' }
+    'macOS'   { 'Linux' }   # macOS shares the Linux collectors best-effort until a dedicated set exists
+    default   { 'Windows' }
 }
+$collectorPath = Join-Path $script:HHModuleRoot "src/Collectors/$collectorSub"
+if (Test-Path -LiteralPath $collectorPath) {
+    Get-ChildItem -LiteralPath $collectorPath -Recurse -Filter '*.ps1' |
+        Sort-Object FullName | ForEach-Object { . $_.FullName }
+}
+
+# 3. Reporting.
+Get-ChildItem -LiteralPath (Join-Path $script:HHModuleRoot 'src/Reporting') -Recurse -Filter '*.ps1' -ErrorAction SilentlyContinue |
+    Sort-Object FullName | ForEach-Object { . $_.FullName }
 
 # Orchestrator / public entry point.
 . (Join-Path $script:HHModuleRoot 'Invoke-HaarisHunter.ps1')

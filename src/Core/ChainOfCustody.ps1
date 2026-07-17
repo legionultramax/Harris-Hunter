@@ -106,16 +106,39 @@ function Get-TimeIntegrity {
     )
 
     $now = [DateTimeOffset]::Now
+    $tzId = try { (Get-TimeZone).Id } catch { [System.TimeZoneInfo]::Local.Id }
     $result = [ordered]@{
         utc              = $now.UtcDateTime.ToString('o')
         local            = $now.ToString('o')
-        timezone         = (Get-TimeZone).Id
+        timezone         = $tzId
         utc_offset       = [System.TimeZoneInfo]::Local.GetUtcOffset($now.DateTime).ToString()
         ntp_server       = $NtpServer
         ntp_skew_seconds = $null
         ntp_status       = 'not_checked'
     }
 
+    if ($script:HHIsLinux) {
+        # Linux: prefer chrony's measured offset, then timedatectl's sync status.
+        try {
+            if (Test-HHCommand 'chronyc') {
+                $tr = & chronyc tracking 2>$null | Out-String
+                $m = [regex]::Match($tr, 'System time\s*:\s*([0-9.]+)\s*seconds\s*(fast|slow)')
+                if ($m.Success) {
+                    $val = [double]$m.Groups[1].Value
+                    if ($m.Groups[2].Value -eq 'slow') { $val = -$val }
+                    $result.ntp_skew_seconds = $val
+                    $result.ntp_status = 'measured'
+                }
+            }
+            if ($result.ntp_status -eq 'not_checked' -and (Test-HHCommand 'timedatectl')) {
+                $sync = & timedatectl show -p NTPSynchronized --value 2>$null
+                if ($sync) { $result.ntp_status = "ntp_synchronized=$($sync.Trim())" }
+            }
+        } catch { $result.ntp_status = "error: $($_.Exception.Message)" }
+        return $result
+    }
+
+    # Windows: measure skew against an NTP source via w32tm (in a timeout-guarded job).
     try {
         $job = Start-Job -ScriptBlock {
             param($srv)

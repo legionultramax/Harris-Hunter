@@ -1,21 +1,43 @@
 {
-  "default_profile": "standard",
-  "profiles": {
-    "quick": [
-      "System", "Process", "Network", "Autoruns", "Services",
-      "ScheduledTasks", "Accounts", "DefenderState"
-    ],
-    "standard": [
-      "System", "Process", "Network", "Autoruns", "Services",
-      "ScheduledTasks", "WmiPersistence", "Accounts", "AuthEvents",
-      "DefenderState", "BitsJobs", "MemoryHints"
-    ],
-    "deep": [
-      "System", "Process", "Network", "Autoruns", "Services",
-      "ScheduledTasks", "WmiPersistence", "Accounts", "AuthEvents",
-      "EventLogs", "Filesystem", "DefenderState", "BitsJobs",
-      "MemoryHints", "Wireless", "BrowserHistory"
-    ]
+  "windows": {
+    "default_profile": "standard",
+    "profiles": {
+      "quick": [
+        "System", "Process", "Network", "Autoruns", "Services",
+        "ScheduledTasks", "Accounts", "DefenderState"
+      ],
+      "standard": [
+        "System", "Process", "Network", "Autoruns", "Services",
+        "ScheduledTasks", "WmiPersistence", "Accounts", "AuthEvents",
+        "DefenderState", "BitsJobs", "MemoryHints"
+      ],
+      "deep": [
+        "System", "Process", "Network", "Autoruns", "Services",
+        "ScheduledTasks", "WmiPersistence", "Accounts", "AuthEvents",
+        "EventLogs", "Filesystem", "DefenderState", "BitsJobs",
+        "MemoryHints", "Wireless", "BrowserHistory"
+      ]
+    }
+  },
+  "linux": {
+    "default_profile": "standard",
+    "profiles": {
+      "quick": [
+        "System", "Process", "Network", "SystemdUnits", "Cron",
+        "Accounts", "SshKeys"
+      ],
+      "standard": [
+        "System", "Process", "Network", "SystemdUnits", "Cron",
+        "Accounts", "Sudoers", "SshKeys", "AuthLogs", "KernelModules",
+        "SuidSgid", "MemoryHints", "Containers"
+      ],
+      "deep": [
+        "System", "Process", "Network", "SystemdUnits", "Cron",
+        "InitScripts", "Accounts", "Sudoers", "SshKeys", "AuthLogs",
+        "ShellHistory", "KernelModules", "SuidSgid", "PackageIntegrity",
+        "Filesystem", "MemoryHints", "Containers"
+      ]
+    }
   },
   "execution": {
     "continue_on_collector_error": true,
