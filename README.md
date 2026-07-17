@@ -1,51 +1,115 @@
-# HAARIS-HUNTER — Phase 1 (Core Framework + Windows Collection)
+# HAARIS-HUNTER
 
-> Compromise-assessment & forensic-triage platform · **CGD-CA-DESIGN-001** · Cyber Gate Defense DFIR
+> Cross-platform compromise-assessment & forensic-triage platform · **CGD-CA-DESIGN-001** · Cyber Gate Defense DFIR
 
 HAARIS-HUNTER is a modular, **authorization-gated**, chain-of-custody forensic collection
 framework for **Windows and Linux**. It re-imagines the collection value of
 [Live-Forensicator](https://github.com/Johnng007/Live-Forensicator) on the HAARIS-HUNTER
-architecture: instead of a monolithic script that produces an HTML report, every run
-emits a **hashed, normalized JSON evidence bundle** that is the ingestion contract for the
-downstream *Normalize → Detect → Risk → Report → Central platform* pipeline.
+architecture: instead of a monolithic script that produces an HTML report, every run emits a
+**hashed, normalized JSON evidence bundle** — the ingestion contract for the downstream
+*Normalize → Detect → Risk → Report → Central platform* pipeline.
 
-Phase 1 delivers the **Core Framework** and the **Windows collectors** (Windows PowerShell 5.1
-and PowerShell 7+, no install required on stock Windows hosts). Phase 1.5 adds the **Linux
-collectors** on the same framework via cross-platform PowerShell 7.
+Runs on **Windows PowerShell 5.1 and PowerShell 7+** (no install on stock Windows hosts) and on
+**Linux via PowerShell 7 (`pwsh`)**.
+
+## Status
+
+| Area | State |
+|---|---|
+| **Core Framework** | Complete — schema, config, authorization gate, logging + SHA-256, hash-chained chain-of-custody + time integrity, statistics, evidence writer (+ AES), evidence-file sink |
+| **Windows collectors** | 16 collectors — verified on a live host (deep run: 16 collectors, ~5.6k records, 0 failed, bundle re-verifies) |
+| **Linux collectors** | 17 collectors — built + parse-clean; **field-test pending** (dev host had no Linux runtime) |
+| **Framework verifier** | `tools/Verify-Framework.ps1` — **38/38 checks, exit 0** on PS 5.1 (OS-neutral) |
+| **Detection engine (Phase 2)** | Not started — consumes the JSON bundle |
 
 ## Why not just use Live-Forensicator?
 
-| Live-Forensicator | HAARIS-HUNTER Phase 1 |
+| Live-Forensicator | HAARIS-HUNTER |
 |---|---|
-| One monolithic `Forensicator.ps1` | Modular Core Framework + pluggable collectors |
+| One monolithic `Forensicator.ps1` | Modular Core Framework + pluggable, OS-specific collectors |
 | HTML report is the primary output | **Normalized JSON bundle** is canonical; HTML is a rendered view |
 | No engagement/scope control | **Authorization gate**: operator + host-scope + time-window enforced before any collection |
-| Hashing + optional AES | Per-artifact SHA-256 + deterministic bundle hash + **hash-chained custody ledger** + optional AES |
-| Detection welded into collection | Collectors *only collect*; detection is a separate Phase 2 engine that consumes the bundle |
+| Hashing + optional AES | Per-file SHA-256 + deterministic bundle hash + **hash-chained custody ledger** + optional AES |
+| Detection welded into collection | Collectors *only collect*; detection is a separate (Phase 2) engine that consumes the bundle |
 
-## What Phase 1 produces
+## What a run produces
 
-Every run writes an evidence bundle directory:
+Every run writes a self-contained evidence bundle:
 
 ```
 HH_<engagement>_<host>_<timestamp>/
 ├── manifest.json      # sealed head: engagement, host, time integrity, authorization,
-│                      #   per-artifact hashes, deterministic bundle_sha256
+│                      #   per-file hashes, deterministic bundle_sha256
 ├── artifacts/
-│   └── <type>.json    # one file per artifact type, each individually SHA-256'd
-├── files/             # raw evidence files (e.g. exported .evtx), each SHA-256'd
-│   └── evtx/ ...      #   folded into the manifest + bundle hash + custody ledger
+│   └── <type>.json    # one file per collector, each individually SHA-256'd
+├── files/             # raw evidence files (exported .evtx, captured browser DBs, …)
+│   └── evtx/ …        #   each SHA-256'd and folded into the manifest + bundle hash + ledger
 ├── bundle.json        # convenience: manifest + all records inline (ingestion-ready)
 ├── coc.jsonl          # append-only, hash-chained chain-of-custody ledger
 ├── haaris-hunter.log  # run log
 └── report.html        # self-contained triage view rendered from the bundle
 ```
 
-## Collectors (Phase 1)
+## Quick start
 
-Each collector is fault-isolated (a failure is logged to the custody ledger and skipped,
-never aborting the run) and emits normalized records via `New-EvidenceRecord`, tagging MITRE
-ATT&CK where it is cheap.
+```powershell
+Import-Module ./HaarisHunter.psd1
+
+# 1. Copy the template and fill in your engagement authorization + scope
+Copy-Item ./config/engagement.template.json ./config/engagement.CGD-ENG-1234.json
+#   edit engagement_id, client, authorization_reference, authorized_operators,
+#   authorized_scope (hostnames/ips), valid_from/valid_to, collection_mode
+
+# 2. Run collection (profiles: quick | standard | deep)
+Invoke-HaarisHunter -EngagementFile ./config/engagement.CGD-ENG-1234.json -Profile standard
+
+# 3. Re-verify a bundle's integrity at any time
+Test-EvidenceBundle -BundlePath ./HH_CGD-ENG-1234_<host>_<stamp>
+
+# 4. (optional) Encrypt the bundle for transport
+Protect-EvidenceBundle -BundlePath ./HH_...   # prompts for a passphrase
+```
+
+On **Linux**: `sudo pwsh -c "Import-Module ./HaarisHunter.psd1; Invoke-HaarisHunter -EngagementFile ./config/engagement.CGD-ENG-1234.json -Profile standard"`.
+
+Switches: `-OutputPath <dir>`, `-Include c1,c2`, `-Exclude c3`, `-Encrypt`, `-DryRun`
+(proceed even when unauthorized, producing an explicitly-marked *unauthorized* bundle — testing
+only), `-LogLevel Debug|Info|Warn|Error`.
+
+## The authorization gate
+
+Collection refuses to run unless the engagement authorizes it. Before anything is gathered,
+`Assert-Authorization` checks that:
+
+- the **running operator** matches `authorized_operators` (Windows: USERNAME / DOMAIN\user / UPN; Linux: `$USER` / `id` / `whoami`),
+- the **host** matches `authorized_scope` (hostname or IP, wildcards allowed), and
+- **now** falls inside `valid_from`…`valid_to`.
+
+On failure the run aborts (use `-DryRun` to override for testing). The `engagement_id` is stamped
+on every record and the manifest, giving unbroken provenance.
+
+## Integrity model
+
+- **Per-file hash** — each `artifacts/<type>.json` and each raw file in `files/` is SHA-256'd into the manifest.
+- **Bundle hash** — `bundle_sha256` is a deterministic hash over the sorted set of all file hashes (artifacts + evidence files), so it is independent of collection order.
+- **Custody ledger** — `coc.jsonl` is append-only and hash-chained: every entry embeds the previous entry's hash, so any edit/removal/reorder is detectable.
+- **Re-verification** — `Test-EvidenceBundle` re-hashes every artifact and evidence file, recomputes the bundle hash, and walks the custody chain. `Test-ChainOfCustody` checks the ledger alone.
+
+## Data minimization
+
+`collection_mode` in the engagement controls collection scope:
+
+- `full` — includes credential/user-content artifacts (Windows: Wi-Fi keys, browser history; Linux: shell history). **Confirm written client authorization explicitly covers this.**
+- `minimized` — metadata + hashes only; credential/content collectors self-limit.
+
+Regardless of mode: everything collected is hashed and recorded in the custody ledger, and
+`/etc/shadow` is **always** captured as metadata only (never password hashes).
+
+## Windows collectors
+
+Each collector is fault-isolated (a failure is logged to the custody ledger and skipped, never
+aborting the run) and emits normalized records via `New-EvidenceRecord`, tagging MITRE ATT&CK
+where it is cheap.
 
 | Collector | Artifacts | ATT&CK |
 |---|---|---|
@@ -66,11 +130,15 @@ ATT&CK where it is cheap.
 | Wireless | Wi-Fi profiles (keys **only in `full` mode**) | T1552.001 |
 | BrowserHistory | raw DB capture + extracted URL/domain IOC surface (**`full` mode only**) | T1217 |
 
-## Linux collectors (Phase 1.5)
+> **Performance:** file evidence (SHA-256 + Authenticode) is cached per image path. Process owner
+> attribution uses a single `Get-Process -IncludeUserName` call (fast, needs elevation) instead of
+> per-process WMI `GetOwner` (~0.5s each), so a full run is typically under a minute. Raw `.evtx`
+> export (`deep`) adds bundle size proportional to log volume.
 
-Run under PowerShell 7 on Linux (`pwsh`), ideally as root for full coverage. The Core Framework,
-evidence schema, chain-of-custody, and reporting are shared; only the OS-specific collectors and a
-few host/time/operator branches differ. The module loads **only** the current OS's collectors.
+## Linux collectors
+
+Loaded only on Linux; run under `pwsh` 7, ideally as root for full coverage. Core Framework,
+schema, chain-of-custody, evidence-file sink, and reporting are shared with Windows.
 
 | Collector | Artifacts | ATT&CK |
 |---|---|---|
@@ -92,124 +160,67 @@ few host/time/operator branches differ. The module loads **only** the current OS
 | MemoryHints | /proc/meminfo, swaps, kcore (pointers, not capture) | — |
 | Containers | docker/podman ps | T1610, T1611 |
 
-> **Field-test status:** Linux collectors are built and parse-clean but were authored on a Windows
-> host with no Linux runtime available, so they are **not yet functionally verified**. Validate on a
+> **Field-test status:** the Linux collectors are built and parse-clean but were authored on a
+> Windows host with no Linux runtime, so they are **not yet functionally verified**. Validate on a
 > Linux host: `sudo pwsh -File tools/Invoke-Example.ps1 -Profile standard` (runs collection and
-> re-verifies the bundle). The Core Framework verifier (`tools/Verify-Framework.ps1`) runs on Linux
-> too and is OS-neutral.
+> re-verifies the bundle).
 
 ## Requirements
 
 - Windows PowerShell 5.1 **or** PowerShell 7+ (Linux needs PowerShell 7 / `pwsh`)
-- **Run elevated (Administrator)** for full coverage — `AuthEvents` (Security log), `Prefetch`,
-  and some Defender/WMI data require it; without elevation those collectors degrade gracefully
-  and record an explicit note rather than failing the run.
-- No third-party modules required at runtime (Pester 5 is only needed to run the CI tests)
+- **Run elevated (Administrator / root)** for full coverage — some artifacts (Security log, Prefetch,
+  Defender/WMI on Windows; `/etc/shadow`, sudoers, other users' data on Linux) require it. Without
+  elevation those collectors degrade gracefully and record an explicit note rather than failing.
+- No third-party modules required at runtime (Pester 5 only for the CI tests)
 
-> **Performance note:** file evidence (SHA-256 + Authenticode) is cached per image path, so a
-> full run is typically well under a minute. Process owner attribution uses a single
-> `Get-Process -IncludeUserName` call (fast, needs elevation) rather than a per-process WMI
-> `GetOwner` (~0.5s each); non-elevated runs simply leave `owner` null. Raw `.evtx` export
-> (`deep` profile) adds bundle size proportional to log volume.
-
-## Quick start
+## Verify
 
 ```powershell
-Import-Module .\HaarisHunter.psd1
+# Dependency-free, OS-neutral, runs on PS 5.1 and 7+, exits non-zero on failure:
+pwsh -File ./tools/Verify-Framework.ps1        # or: powershell -File ...
 
-# 1. Copy the template and fill in your engagement authorization + scope
-Copy-Item .\config\engagement.template.json .\config\engagement.CGD-ENG-1234.json
-#   edit engagement_id, client, authorization_reference, authorized_operators,
-#   authorized_scope (hostnames/ips), valid_from/valid_to, collection_mode
-
-# 2. Run collection (profiles: quick | standard | deep)
-Invoke-HaarisHunter -EngagementFile .\config\engagement.CGD-ENG-1234.json -Profile standard
-
-# 3. Re-verify a bundle's integrity at any time
-Test-EvidenceBundle -BundlePath .\HH_CGD-ENG-1234_<host>_<stamp>
-
-# 4. (optional) Encrypt the bundle for transport
-Protect-EvidenceBundle -BundlePath .\HH_...   # prompts for a passphrase
-```
-
-Useful switches: `-OutputPath <dir>`, `-Include c1,c2`, `-Exclude c3`, `-Encrypt`,
-`-DryRun` (proceed even when unauthorized, producing an explicitly-marked *unauthorized*
-bundle — for testing only), `-LogLevel Debug|Info|Warn|Error`.
-
-## The authorization gate
-
-Collection refuses to run unless the engagement authorizes it. Before anything is gathered,
-`Assert-Authorization` checks that:
-
-- the **running operator** matches `authorized_operators` (USERNAME / DOMAIN\user / UPN),
-- the **host** matches `authorized_scope` (hostname or IP, wildcards allowed), and
-- **now** falls inside `valid_from`…`valid_to`.
-
-On failure the run aborts (use `-DryRun` to override for testing). The `engagement_id` is
-stamped on every record and the manifest, giving unbroken provenance.
-
-## Integrity model
-
-- **Per-artifact hash** — each `artifacts/<type>.json` is SHA-256'd into the manifest.
-- **Bundle hash** — `bundle_sha256` is a deterministic hash over the sorted artifact hashes.
-- **Custody ledger** — `coc.jsonl` is append-only and hash-chained: every entry embeds the
-  previous entry's hash, so any edit/removal/reorder is detectable.
-- **Re-verification** — `Test-EvidenceBundle` re-hashes every artifact, recomputes the
-  bundle hash, and walks the custody chain. `Test-ChainOfCustody` checks the ledger alone.
-
-## Data minimization
-
-`collection_mode` in the engagement controls scope of collection:
-
-- `full` — includes credential/user-content artifacts (Wi-Fi keys, browser history), as
-  Live-Forensicator does. **Confirm written client authorization explicitly covers this.**
-- `minimized` — metadata + hashes only; credential/content collectors self-limit.
-
-Everything collected is hashed and recorded in the custody ledger regardless of mode.
-
-## Verify the framework
-
-```powershell
-# Dependency-free, runs on 5.1 and 7+, exits non-zero on failure:
-pwsh -File .\tools\Verify-Framework.ps1      # or: powershell -File ...
+# Example / field-test run (creates a permissive engagement, collects, re-verifies):
+pwsh -File ./tools/Invoke-Example.ps1 -Profile standard
 
 # CI (requires Pester 5):
-Invoke-Pester -Path .\tests\HaarisHunter.Tests.ps1
+Invoke-Pester -Path ./tests/HaarisHunter.Tests.ps1
 ```
 
-`Verify-Framework.ps1` proves: module import, schema, hashing, all authorization paths,
-end-to-end seal, bundle re-verification, artifact + custody-ledger tamper detection, and
-the AES round-trip (33 checks).
+`Verify-Framework.ps1` proves (**38 checks**): module import + public surface, hashing, schema
+(incl. empty-attack normalization), all authorization paths, end-to-end seal, bundle
+re-verification (artifacts + evidence files), same-name evidence de-collision, artifact +
+evidence-file + custody-ledger tamper detection, and the AES round-trip.
 
 ## Layout
 
 ```
-HaarisHunter.psd1 / .psm1     module manifest + loader
+HaarisHunter.psd1 / .psm1     module manifest + OS-aware loader
 Invoke-HaarisHunter.ps1       orchestrator / entry point
-config/                       constants, collection profiles, engagement template
-src/Core/                     EvidenceSchema, Configuration, AuthorizationGate, Logging,
-                              Statistics, ChainOfCustody, EvidenceWriter
+config/                       constants, per-OS collection profiles, engagement template
+src/Core/                     Platform, EvidenceSchema, Configuration, AuthorizationGate, Logging,
+                              Statistics, ChainOfCustody, EvidenceFiles, EvidenceWriter
 src/Reporting/                JSON bundle writer + HTML report
-src/Collectors/Windows/       16 collectors + _CollectorHelpers.ps1 (see that folder's README)
+src/Collectors/Windows/       16 collectors + _CollectorHelpers.ps1
 src/Collectors/Linux/         17 collectors + _LinuxHelpers.ps1 (loaded only on Linux)
 tests/                        Pester 5 tests
-tools/Verify-Framework.ps1    dependency-free verification (OS-neutral)
+tools/Verify-Framework.ps1    dependency-free framework verification (OS-neutral)
 tools/Invoke-Example.ps1      cross-platform example / field-test runner
 ```
 
-## Roadmap
+## Architecture
 
-- **Phase 1 (this repo)** — Core Framework + Windows collectors. ✅ Done.
-- **Phase 1.5** — Linux collectors on the same framework (PowerShell 7). ✅ Built (field-test pending on a Linux host).
-- **Phase 2** — Detection engine consuming the JSON bundle (IOC, Sigma, YARA, cross-artifact
-  DSL, ATT&CK mapping, C2/ransomware/lateral/cred-abuse).
-- **Phase 3+** — Correlation/dedup → Risk engine → Central platform (ingestion API,
-  PostgreSQL findings DB, WORM store, RBAC, multi-tenant).
+Collectors **only gather** (return normalized records; the orchestrator owns hashing, I/O, and
+custody). The evidence bundle is the stable contract between phases:
+
+- **Phase 1** — Core Framework + Windows collectors. ✅ Done.
+- **Phase 1.5** — Linux collectors on the same framework. ✅ Built (field-test pending on a Linux host).
+- **Phase 2** — Detection engine consuming the JSON bundle (IOC, Sigma, YARA, native cross-artifact DSL, ATT&CK mapping; C2 / ransomware / lateral-movement / credential-abuse detections).
+- **Phase 3+** — Correlation/dedup → Risk engine → Central platform (ingestion API, PostgreSQL findings DB, WORM store, RBAC, multi-tenant).
 
 ## Notes
 
-- `Seal-EvidenceBundle` uses the non-standard verb "Seal" (evidence sealing is the domain
-  term); PowerShell emits a cosmetic "unapproved verb" warning on import. This is intentional.
+- `Seal-EvidenceBundle` uses the non-standard verb "Seal" (evidence sealing is the domain term);
+  PowerShell emits a cosmetic "unapproved verb" warning on import. Intentional.
 - Legal: HAARIS-HUNTER is for **authorized** compromise-assessment engagements only. The
   authorization gate is a safeguard, not a substitute for written client authorization.
 
