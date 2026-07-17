@@ -1,0 +1,24 @@
+{
+  "default_profile": "standard",
+  "profiles": {
+    "quick": [
+      "System", "Process", "Network", "Autoruns", "Services",
+      "ScheduledTasks", "Accounts", "DefenderState"
+    ],
+    "standard": [
+      "System", "Process", "Network", "Autoruns", "Services",
+      "ScheduledTasks", "WmiPersistence", "Accounts", "AuthEvents",
+      "DefenderState", "BitsJobs", "MemoryHints"
+    ],
+    "deep": [
+      "System", "Process", "Network", "Autoruns", "Services",
+      "ScheduledTasks", "WmiPersistence", "Accounts", "AuthEvents",
+      "EventLogs", "Filesystem", "DefenderState", "BitsJobs",
+      "MemoryHints", "Wireless", "BrowserHistory"
+    ]
+  },
+  "execution": {
+    "continue_on_collector_error": true,
+    "note": "Collectors run sequentially so the chain-of-custody ledger stays strictly ordered and hashes are deterministic. Parallel execution is a later optimization."
+  }
+}

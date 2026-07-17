@@ -1,0 +1,21 @@
+# Evidence output bundles (never commit collected evidence)
+HH_*/
+*_out/
+_smoke_*/
+*.hhbundle.aes
+*.decrypted.zip
+
+# Operator-specific engagement definitions (contain client/scope data)
+config/engagement.*.json
+!config/engagement.template.json
+
+# Logs / scratch
+*.log
+scratch/
+tmp/
+
+# OS / editor cruft
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/

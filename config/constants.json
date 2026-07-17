@@ -1,0 +1,24 @@
+{
+  "tool_name": "HAARIS-HUNTER",
+  "tool_version": "0.1.0",
+  "schema_version": "1.0",
+  "design_ref": "CGD-CA-DESIGN-001",
+  "hash_algorithm": "SHA256",
+  "time": {
+    "ntp_server": "time.windows.com",
+    "skew_warn_seconds": 5
+  },
+  "output": {
+    "artifacts_dir": "artifacts",
+    "manifest_file": "manifest.json",
+    "bundle_file": "bundle.json",
+    "coc_file": "coc.jsonl",
+    "log_file": "haaris-hunter.log",
+    "report_file": "report.html"
+  },
+  "event_ids": {
+    "security_logon": [4624, 4625, 4634, 4647, 4648, 4672, 4720, 4726, 4728, 4732, 4756, 4768, 4769, 4776]
+  },
+  "collector_timeout_seconds": 300,
+  "json_depth": 12
+}

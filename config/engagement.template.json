@@ -1,0 +1,21 @@
+{
+  "engagement_id": "CGD-ENG-0000",
+  "client": "EXAMPLE CLIENT",
+  "authorization_reference": "SOW-2026-000 / TICKET-000",
+  "authorized_operators": [
+    "dfir-th@cybergate.tech"
+  ],
+  "authorized_scope": {
+    "hostnames": ["*"],
+    "ips": [],
+    "asset_tags": []
+  },
+  "valid_from": "2026-07-17T00:00:00Z",
+  "valid_to": "2026-12-31T23:59:59Z",
+  "collection_mode": "full",
+  "_notes": {
+    "authorized_scope": "hostnames/ips accept exact values or wildcard patterns (e.g. WKS-*, 10.0.0.*). Use ['*'] only when the engagement authorizes the entire estate. Narrow this for real engagements.",
+    "collection_mode": "'full' includes credential and user-content artifacts (Wi-Fi keys, browser history). Confirm written client authorization explicitly covers this. Use 'minimized' to collect metadata + hashes only.",
+    "operators": "authorized_operators are matched against the running user (USERNAME / UPN). Only listed operators may run collection against this engagement."
+  }
+}

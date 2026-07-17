@@ -1,0 +1,7 @@
+# Deterministic line endings. PowerShell scripts stay CRLF for Windows hosts.
+* text=auto
+*.ps1  text eol=crlf
+*.psm1 text eol=crlf
+*.psd1 text eol=crlf
+*.json text eol=crlf
+*.md   text eol=crlf
