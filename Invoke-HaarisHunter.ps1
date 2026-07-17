@@ -85,6 +85,13 @@ function Invoke-HaarisHunter {
     $stats     = New-HHRunStats
     $collected = [ordered]@{}
 
+    # Best-effort collection: a stray non-terminating error inside a collector (e.g. an
+    # access-denied on one file) must not abort it. Collectors still use explicit
+    # -ErrorAction Stop inside try/catch where they want to catch, and the orchestrator's
+    # per-collector try/catch below is the backstop for terminating errors.
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+
     foreach ($name in $config.EnabledCollectors) {
         $fnName = "Collect-$name"
         $fn = Get-Command -Name $fnName -CommandType Function -ErrorAction SilentlyContinue
@@ -115,9 +122,10 @@ function Invoke-HaarisHunter {
             Add-HHCollectorStat -Stats $stats -Collector $name -DurationMs $sw.Elapsed.TotalMilliseconds -Status 'failed'
             Add-CocEvent -EventType 'collector_error' -Details @{ collector = $name; error = "$($_.Exception.Message)" }
             Write-HHLog -Level Error -Message "  [$name] FAILED: $($_.Exception.Message)"
-            if (-not $config.ContinueOnError) { throw }
+            if (-not $config.ContinueOnError) { $ErrorActionPreference = $prevEap; throw }
         }
     }
+    $ErrorActionPreference = $prevEap
 
     # --- Seal + report ---
     $manifest = Seal-EvidenceBundle -OutputPath $OutputPath -Collected $collected -Context $context `

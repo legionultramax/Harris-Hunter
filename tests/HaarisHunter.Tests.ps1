@@ -3,11 +3,21 @@
     Requires Pester 5+ (Install-Module Pester -MinimumVersion 5.0 -Scope CurrentUser).
     For a dependency-free equivalent that runs on any PowerShell, use tools/Verify-Framework.ps1.
     Run:  Invoke-Pester -Path tests/HaarisHunter.Tests.ps1
+
+    These tests use two in-memory collectors (Zeta, Alpha) whose include order differs from
+    their alphabetical file order, and exclude every real host collector, so they run fast and
+    still regression-test the order-independent bundle hash.
 #>
 
 BeforeAll {
     $script:ModuleRoot = Split-Path -Parent $PSScriptRoot
     Import-Module (Join-Path $script:ModuleRoot 'HaarisHunter.psd1') -Force
+
+    $script:RealCollectors = @(
+        'System','Process','Network','Autoruns','Services','ScheduledTasks','WmiPersistence',
+        'Accounts','AuthEvents','EventLogs','Filesystem','DefenderState','BitsJobs','MemoryHints',
+        'Wireless','BrowserHistory'
+    )
 
     function New-TestEngagement {
         param([string[]]$Operators = @('*'), [string[]]$Hostnames = @('*'),
@@ -28,16 +38,18 @@ BeforeAll {
         $p
     }
 
-    # A self-test collector so end-to-end runs produce a real, hashable artifact.
-    function global:Collect-SelfTest {
-        param($Context)
-        New-EvidenceRecord -ArtifactType 'selftest' -Collector 'Collect-SelfTest' `
-            -Source 'pester' -Attack @('T1059') -Data @{ note = 'hello'; n = 1 } -Context $Context
+    function Invoke-TestRun {
+        param([string]$OutputPath, [string]$EngagementFile)
+        Invoke-HaarisHunter -EngagementFile $EngagementFile -Profile quick -Include 'Zeta','Alpha' `
+            -Exclude $script:RealCollectors -OutputPath $OutputPath -LogLevel Error
     }
+
+    function global:Collect-Zeta  { param($Context) New-EvidenceRecord -ArtifactType 'zeta'  -Collector 'Collect-Zeta'  -Attack @('T1059') -Data @{ v = 1 } -Context $Context }
+    function global:Collect-Alpha { param($Context) New-EvidenceRecord -ArtifactType 'alpha' -Collector 'Collect-Alpha' -Attack @()        -Data @{ v = 2 } -Context $Context }
 }
 
 AfterAll {
-    Remove-Item Function:\Collect-SelfTest -ErrorAction SilentlyContinue
+    Remove-Item Function:\Collect-Zeta, Function:\Collect-Alpha -ErrorAction SilentlyContinue
 }
 
 Describe 'Hash engine' {
@@ -51,9 +63,11 @@ Describe 'Evidence schema' {
     BeforeAll {
         $ctx = [pscustomobject]@{ Host = @{ hostname = 'H' }; EngagementId = 'E1' }
         $script:rec = New-EvidenceRecord -ArtifactType 'test' -Collector 'C' -Data @{ a = 1 } -Context $ctx
+        $script:recEmptyAttack = New-EvidenceRecord -ArtifactType 't' -Collector 'C' -Data @{} -Attack @() -Context $ctx
     }
     It 'builds a schema-valid record' { Test-EvidenceRecord -Record $script:rec | Should -BeTrue }
     It 'stamps the engagement id' { $script:rec.engagement_id | Should -Be 'E1' }
+    It 'keeps attack as an array even when empty' { ,$script:recEmptyAttack['attack'] | Should -BeOfType [System.Collections.IEnumerable] }
     It 'rejects a malformed record' { Test-EvidenceRecord -Record @{ foo = 'bar' } | Should -BeFalse }
 }
 
@@ -86,7 +100,7 @@ Describe 'End-to-end collection and sealing' {
     BeforeAll {
         $script:eng = New-TestEngagement
         $script:out = New-TestOutDir
-        $script:run = Invoke-HaarisHunter -EngagementFile $script:eng -Profile quick -Include SelfTest -OutputPath $script:out -LogLevel Error
+        $script:run = Invoke-TestRun -OutputPath $script:out -EngagementFile $script:eng
     }
 
     It 'reports the run as authorized' { $script:run.Authorized | Should -BeTrue }
@@ -95,21 +109,24 @@ Describe 'End-to-end collection and sealing' {
             Test-Path (Join-Path $script:out $f) | Should -BeTrue
         }
     }
-    It 'writes the self-test artifact' { Test-Path (Join-Path $script:out 'artifacts/selftest.json') | Should -BeTrue }
-    It 'produces a bundle that re-verifies' { (Test-EvidenceBundle -BundlePath $script:out).Valid | Should -BeTrue }
+    It 'writes both artifacts' {
+        (Test-Path (Join-Path $script:out 'artifacts/alpha.json')) | Should -BeTrue
+        (Test-Path (Join-Path $script:out 'artifacts/zeta.json'))  | Should -BeTrue
+    }
+    It 'produces a bundle that re-verifies (order-independent hash)' { (Test-EvidenceBundle -BundlePath $script:out).Valid | Should -BeTrue }
     It 'has an intact custody chain' { (Test-ChainOfCustody -Path (Join-Path $script:out 'coc.jsonl')).Valid | Should -BeTrue }
 }
 
 Describe 'Tamper detection' {
     It 'detects modified artifact content' {
         $eng = New-TestEngagement; $out = New-TestOutDir
-        Invoke-HaarisHunter -EngagementFile $eng -Profile quick -Include SelfTest -OutputPath $out -LogLevel Error | Out-Null
-        Add-Content -LiteralPath (Join-Path $out 'artifacts/selftest.json') -Value ' '
+        Invoke-TestRun -OutputPath $out -EngagementFile $eng | Out-Null
+        Add-Content -LiteralPath (Join-Path $out 'artifacts/alpha.json') -Value ' '
         (Test-EvidenceBundle -BundlePath $out).Valid | Should -BeFalse
     }
     It 'detects a modified custody ledger' {
         $eng = New-TestEngagement; $out = New-TestOutDir
-        Invoke-HaarisHunter -EngagementFile $eng -Profile quick -Include SelfTest -OutputPath $out -LogLevel Error | Out-Null
+        Invoke-TestRun -OutputPath $out -EngagementFile $eng | Out-Null
         $coc = Join-Path $out 'coc.jsonl'
         $lines = Get-Content -LiteralPath $coc
         $lines[1] = $lines[1] -replace '"event":"[^"]+"', '"event":"forged"'
@@ -121,7 +138,7 @@ Describe 'Tamper detection' {
 Describe 'AES transport encryption' {
     It 'round-trips with the correct passphrase and rejects a wrong one' {
         $eng = New-TestEngagement; $out = New-TestOutDir
-        Invoke-HaarisHunter -EngagementFile $eng -Profile quick -Include SelfTest -OutputPath $out -LogLevel Error | Out-Null
+        Invoke-TestRun -OutputPath $out -EngagementFile $eng | Out-Null
         $secure = ConvertTo-SecureString 'Pester-Passphrase-123!' -AsPlainText -Force
         $enc = Protect-EvidenceBundle -BundlePath $out -Passphrase $secure
         Test-Path $enc | Should -BeTrue

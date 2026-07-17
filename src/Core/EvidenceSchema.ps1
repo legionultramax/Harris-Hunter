@@ -30,6 +30,12 @@ function New-EvidenceRecord {
         [Parameter(Mandatory)]$Context
     )
 
+    # Build a guaranteed-non-null string[] for attack. Passing an explicit empty @() to a
+    # [string[]] parameter can collapse to $null once stored in an OrderedDictionary, so we
+    # normalize through a List and always emit an array (possibly empty).
+    $attackList = [System.Collections.Generic.List[string]]::new()
+    if ($Attack) { foreach ($t in $Attack) { if ($t) { $attackList.Add([string]$t) } } }
+
     [ordered]@{
         schema_version   = $script:HHSchemaVersion
         artifact_type    = $ArtifactType
@@ -38,7 +44,7 @@ function New-EvidenceRecord {
         host             = $Context.Host
         engagement_id    = $Context.EngagementId
         source           = $Source
-        attack           = @($Attack)
+        attack           = $attackList.ToArray()
         data             = $Data
     }
 }

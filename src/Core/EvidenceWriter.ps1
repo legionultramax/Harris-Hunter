@@ -66,7 +66,10 @@ function Seal-EvidenceBundle {
     }
 
     # Deterministic bundle hash: sort artifact entries by file, hash "file:sha256" lines.
-    $concat = ($artifactEntries | Sort-Object file | ForEach-Object { "$($_.file):$($_.sha256)" }) -join "`n"
+    # NB: use a scriptblock sort key - Sort-Object -Property 'file' does NOT sort ordered
+    # dictionaries (it can't see hashtable keys as properties), which would desync this from
+    # Test-EvidenceBundle's recompute over the JSON-read objects.
+    $concat = ($artifactEntries | Sort-Object { $_.file } | ForEach-Object { "$($_.file):$($_.sha256)" }) -join "`n"
     $manifest['bundle_sha256'] = 'sha256:' + (Get-HHStringHash -InputString $concat)
 
     $manifestPath = Join-Path $OutputPath 'manifest.json'
@@ -110,7 +113,7 @@ function Test-EvidenceBundle {
         }
     }
 
-    $concat   = ($manifest.artifacts | Sort-Object file | ForEach-Object { "$($_.file):$($_.sha256)" }) -join "`n"
+    $concat   = ($manifest.artifacts | Sort-Object { $_.file } | ForEach-Object { "$($_.file):$($_.sha256)" }) -join "`n"
     $expected = 'sha256:' + (Get-HHStringHash -InputString $concat)
     if ($expected -ne $manifest.bundle_sha256) {
         $problems.Add("bundle_sha256 mismatch: manifest=$($manifest.bundle_sha256) recomputed=$expected")

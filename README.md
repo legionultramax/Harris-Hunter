@@ -9,7 +9,7 @@ architecture: instead of a monolithic script that produces an HTML report, every
 emits a **hashed, normalized JSON evidence bundle** that is the ingestion contract for the
 downstream *Normalize → Detect → Risk → Report → Central platform* pipeline.
 
-Phase 1 delivers the **Core Framework** and the Windows collection skeleton. It runs on
+Phase 1 delivers the **Core Framework** and the **Windows collectors**. It runs on
 **Windows PowerShell 5.1 and PowerShell 7+** (no install required on stock Windows hosts).
 
 ## Why not just use Live-Forensicator?
@@ -38,11 +38,43 @@ HH_<engagement>_<host>_<timestamp>/
 └── report.html        # self-contained triage view rendered from the bundle
 ```
 
+## Collectors (Phase 1)
+
+Each collector is fault-isolated (a failure is logged to the custody ledger and skipped,
+never aborting the run) and emits normalized records via `New-EvidenceRecord`, tagging MITRE
+ATT&CK where it is cheap.
+
+| Collector | Artifacts | ATT&CK |
+|---|---|---|
+| System | OS, hardware, boot time, hotfixes | — |
+| Process | processes + image SHA-256 + Authenticode + cmdline + owner | T1055, T1059 |
+| Network | TCP/UDP + owning process, DNS cache, adapters, routes, firewall, SMB | — |
+| Autoruns | Run/RunOnce, IFEO, Winlogon, LSA | T1547, T1546 |
+| Services | services + binary hash/signature | T1543.003 |
+| ScheduledTasks | tasks, actions, triggers | T1053.005 |
+| WmiPersistence | `__EventFilter`/`__EventConsumer`/binding | T1546.003 |
+| Accounts | local users, group membership, privileges | T1098 |
+| AuthEvents | recent Security logon events (capped, 7d) | T1078, T1110 |
+| EventLogs | log inventory + capped PowerShell/Sysmon/System events | T1059.001 |
+| Filesystem | Prefetch, drop-dir executables, Amcache pointer | T1204 |
+| DefenderState | status, **exclusions**, threat history, tamper protection | T1562.001 |
+| BitsJobs | BITS transfer jobs + URLs | T1197 |
+| MemoryHints | pagefile/RAM/crash-dump config (pointers, not capture) | — |
+| Wireless | Wi-Fi profiles (keys **only in `full` mode**) | T1552.001 |
+| BrowserHistory | history-store files + hashes (**`full` mode only**) | T1217 |
+
 ## Requirements
 
 - Windows PowerShell 5.1 **or** PowerShell 7+
-- Run elevated (Administrator) for full artifact coverage
+- **Run elevated (Administrator)** for full coverage — `AuthEvents` (Security log), `Prefetch`,
+  and some Defender/WMI data require it; without elevation those collectors degrade gracefully
+  and record an explicit note rather than failing the run.
 - No third-party modules required at runtime (Pester 5 is only needed to run the CI tests)
+
+> **Performance note:** `Process` and `Services` compute a SHA-256 **and an Authenticode
+> signature** for every image; Authenticode does online certificate-revocation lookups, so a
+> full run can take several minutes on a busy host (hashes are cached per path). Parallel
+> hashing / an offline-revocation fast path is a Phase 1.x optimization.
 
 ## Quick start
 
@@ -122,14 +154,14 @@ config/                       constants, collection profiles, engagement templat
 src/Core/                     EvidenceSchema, Configuration, AuthorizationGate, Logging,
                               Statistics, ChainOfCustody, EvidenceWriter
 src/Reporting/                JSON bundle writer + HTML report
-src/Collectors/Windows/       collectors (Phase 1 build target — see that folder's README)
+src/Collectors/Windows/       16 collectors + _CollectorHelpers.ps1 (see that folder's README)
 tests/                        Pester 5 tests
 tools/Verify-Framework.ps1    dependency-free verification
 ```
 
 ## Roadmap
 
-- **Phase 1 (this repo)** — Core Framework + Windows collectors.
+- **Phase 1 (this repo)** — Core Framework + Windows collectors. ✅ Done.
 - **Phase 1.5** — Linux collectors on the same framework (PowerShell 7 cross-platform).
 - **Phase 2** — Detection engine consuming the JSON bundle (IOC, Sigma, YARA, cross-artifact
   DSL, ATT&CK mapping, C2/ransomware/lateral/cred-abuse).
