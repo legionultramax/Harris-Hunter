@@ -3,11 +3,10 @@
 > Cross-platform compromise-assessment & forensic-triage platform · **CGD-CA-DESIGN-001** · Cyber Gate Defense DFIR
 
 HAARIS-HUNTER is a modular, **authorization-gated**, chain-of-custody forensic collection
-framework for **Windows and Linux**. It re-imagines the collection value of
-[Live-Forensicator](https://github.com/Johnng007/Live-Forensicator) on the HAARIS-HUNTER
-architecture: instead of a monolithic script that produces an HTML report, every run emits a
-**hashed, normalized JSON evidence bundle** — the ingestion contract for the downstream
-*Normalize → Detect → Risk → Report → Central platform* pipeline.
+framework for **Windows and Linux**. Every run emits a **hashed, normalized JSON evidence
+bundle** — the ingestion contract for the downstream
+*Normalize → Detect → Risk → Report → Central platform* pipeline — with a self-contained HTML
+triage view rendered from it.
 
 Runs on **Windows PowerShell 5.1 and PowerShell 7+** (no install on stock Windows hosts) and on
 **Linux via PowerShell 7 (`pwsh`)**.
@@ -22,15 +21,13 @@ Runs on **Windows PowerShell 5.1 and PowerShell 7+** (no install on stock Window
 | **Framework verifier** | `tools/Verify-Framework.ps1` — **38/38 checks, exit 0** on PS 5.1 (OS-neutral) |
 | **Detection engine (Phase 2)** | Not started — consumes the JSON bundle |
 
-## Why not just use Live-Forensicator?
+## Design principles
 
-| Live-Forensicator | HAARIS-HUNTER |
-|---|---|
-| One monolithic `Forensicator.ps1` | Modular Core Framework + pluggable, OS-specific collectors |
-| HTML report is the primary output | **Normalized JSON bundle** is canonical; HTML is a rendered view |
-| No engagement/scope control | **Authorization gate**: operator + host-scope + time-window enforced before any collection |
-| Hashing + optional AES | Per-file SHA-256 + deterministic bundle hash + **hash-chained custody ledger** + optional AES |
-| Detection welded into collection | Collectors *only collect*; detection is a separate (Phase 2) engine that consumes the bundle |
+- **Modular** — a small Core Framework plus pluggable, OS-specific collectors.
+- **JSON-first** — the normalized JSON bundle is canonical; the HTML report is a rendered view.
+- **Authorization-gated** — operator + host-scope + time-window are enforced before any collection.
+- **Provable integrity** — per-file SHA-256, a deterministic bundle hash, and a hash-chained custody ledger.
+- **Separation of concerns** — collectors *only collect*; detection, correlation, and risk are later phases that consume the bundle.
 
 ## What a run produces
 

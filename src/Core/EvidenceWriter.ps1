@@ -2,7 +2,7 @@
 # Writes each artifact type to its own file (individually hashed), builds the manifest,
 # computes a deterministic bundle hash over the artifact hashes, and records the seal in
 # the custody ledger. Test-EvidenceBundle re-verifies the whole thing; Protect/Unprotect
-# provide optional AES-256 transport encryption (carried over from Live-Forensicator).
+# provide optional AES-256 transport encryption.
 
 function Get-HHBundleHashInput {
     <#

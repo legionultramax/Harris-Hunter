@@ -1,8 +1,7 @@
 # AuthorizationGate.ps1 - engagement + scope enforcement.
-# This is the control HAARIS-HUNTER adds that Live-Forensicator lacks: collection may
-# only run when the running operator, the target host, and the current time all fall
-# inside the authorized engagement. The decision is returned (not thrown) so the
-# orchestrator can honor -DryRun; the engagement_id then stamps every record.
+# A core control: collection may only run when the running operator, the target host, and the
+# current time all fall inside the authorized engagement. The decision is returned (not thrown)
+# so the orchestrator can honor -DryRun; the engagement_id then stamps every record.
 
 function Get-HHOperatorIdentity {
     <#
