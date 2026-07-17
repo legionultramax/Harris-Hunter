@@ -150,6 +150,13 @@ Invoke-VerifyRun -OutputPath $outE | Out-Null
 Add-Content -LiteralPath (Join-Path $outE 'files/test/sample.bin') -Value 'x'
 Assert-That "evidence-file tampering detected" (-not (Test-EvidenceBundle -BundlePath $outE).Valid)
 
+# manifest.json edited but kept internally self-consistent (still parses); caught only by the
+# custody-ledger anchor (ledger records the original manifest hash).
+$outM = New-TempDir
+Invoke-VerifyRun -OutputPath $outM | Out-Null
+Add-Content -LiteralPath (Join-Path $outM 'manifest.json') -Value ' '
+Assert-That "manifest tamper caught via custody-ledger anchor" (-not (Test-EvidenceBundle -BundlePath $outM).Valid)
+
 $out2 = New-TempDir
 Invoke-VerifyRun -OutputPath $out2 | Out-Null
 $coc = Join-Path $out2 'coc.jsonl'
@@ -174,7 +181,7 @@ Assert-That "wrong passphrase rejected" (-not $wrongOk)
 
 # --- Cleanup ---
 Remove-Item Function:\Collect-Zeta, Function:\Collect-Alpha -ErrorAction SilentlyContinue
-foreach ($d in $out,$outE,$out2,$out3) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+foreach ($d in $out,$outE,$outM,$out2,$out3) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
 Remove-Item -LiteralPath $enc -Force -ErrorAction SilentlyContinue
 
 Write-Host ("`n==== {0} passed, {1} failed ====" -f $script:Pass, $script:Fail) -ForegroundColor $(if ($script:Fail){'Red'}else{'Green'})

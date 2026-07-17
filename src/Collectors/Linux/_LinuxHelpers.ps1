@@ -3,6 +3,13 @@
 
 $script:HHLinuxFileCache = @{}
 
+function Reset-HHFileEvidenceCache {
+    # Called by the orchestrator at the start of each run so a second Invoke in the same
+    # session never serves stale file hashes or a stale uid->name map.
+    $script:HHLinuxFileCache = @{}
+    $script:HHUidMap = $null
+}
+
 function Get-HHLinuxFileEvidence {
     <#
     .SYNOPSIS
@@ -68,9 +75,9 @@ function Get-HHProcStatusField {
     .SYNOPSIS
         Read a single field (e.g. PPid, Uid, Name) from /proc/<pid>/status.
     #>
-    param([Parameter(Mandatory)][string]$Pid, [Parameter(Mandatory)][string]$Field)
+    param([Parameter(Mandatory)][string]$ProcessId, [Parameter(Mandatory)][string]$Field)
     try {
-        foreach ($line in (Get-Content -LiteralPath "/proc/$Pid/status" -ErrorAction Stop)) {
+        foreach ($line in (Get-Content -LiteralPath "/proc/$ProcessId/status" -ErrorAction Stop)) {
             if ($line -match "^$Field`:\s*(.+)$") { return $Matches[1].Trim() }
         }
     } catch { }

@@ -37,6 +37,8 @@ function Invoke-HaarisHunter {
     Initialize-HHLogging -OutputPath $OutputPath -MinLevel $LogLevel
     Initialize-ChainOfCustody -OutputPath $OutputPath
     Initialize-EvidenceFiles -OutputPath $OutputPath
+    # Clear per-run collector caches so repeated Invokes in one session never serve stale hashes.
+    if (Get-Command Reset-HHFileEvidenceCache -ErrorAction SilentlyContinue) { Reset-HHFileEvidenceCache }
 
     Write-HHLog -Level Info -Message "HAARIS-HUNTER v$($config.ToolVersion) starting | engagement=$($config.Engagement['engagement_id']) | profile=$($config.Profile) | mode=$($config.CollectionMode)"
     Write-HHLog -Level Info -Message "Output: $OutputPath"

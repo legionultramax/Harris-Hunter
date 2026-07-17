@@ -6,6 +6,12 @@
 # services reference it (e.g. svchost.exe).
 $script:HHFileEvidenceCache = @{}
 
+function Reset-HHFileEvidenceCache {
+    # Called by the orchestrator at the start of each run so a second Invoke in the same
+    # session never serves file hashes computed against an earlier run's file state.
+    $script:HHFileEvidenceCache = @{}
+}
+
 function Resolve-HHImagePath {
     <#
     .SYNOPSIS

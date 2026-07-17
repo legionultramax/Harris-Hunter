@@ -145,6 +145,23 @@ function Test-EvidenceBundle {
         if (-not $cocResult.Valid) {
             foreach ($p in $cocResult.Problems) { $problems.Add("coc: $p") }
         }
+
+        # Anchor the manifest to the hash-chained custody ledger: the bundle_sealed event
+        # records manifest_sha256 at seal time. Any later edit to manifest.json (even one that
+        # keeps its own artifact hashes / bundle_sha256 self-consistent) changes its file hash
+        # and is caught here. (Defeating this also requires forging the tamper-evident ledger;
+        # true tamper-proofing still needs an external anchor - see the WORM/signature roadmap.)
+        try {
+            $sealed = Get-Content -LiteralPath $cocPath -ErrorAction Stop |
+                Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json } |
+                Where-Object { $_.event -eq 'bundle_sealed' } | Select-Object -Last 1
+            if ($sealed -and $sealed.details -and $sealed.details.manifest_sha256) {
+                $actualManifest = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLower()
+                if ($actualManifest -ne $sealed.details.manifest_sha256) {
+                    $problems.Add("manifest.json hash mismatch vs custody ledger: ledger=$($sealed.details.manifest_sha256) actual=$actualManifest")
+                }
+            }
+        } catch { }
     }
 
     [pscustomobject]@{

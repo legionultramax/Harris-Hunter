@@ -31,6 +31,8 @@ function Add-EvidenceFile {
     if (-not $script:HHEvidenceFileDir) { throw 'Evidence file sink not initialized. Call Initialize-EvidenceFiles first.' }
     if (-not (Test-Path -LiteralPath $SourcePath -ErrorAction SilentlyContinue)) { return $null }
     if (-not $Name) { $Name = Split-Path -Leaf $SourcePath }
+    # Defense-in-depth: never let a caller-supplied name escape the category dir (path traversal).
+    $Name = Split-Path -Leaf $Name
 
     $catDir = Join-Path $script:HHEvidenceFileDir $Category
     if (-not (Test-Path -LiteralPath $catDir)) { New-Item -ItemType Directory -Path $catDir -Force | Out-Null }

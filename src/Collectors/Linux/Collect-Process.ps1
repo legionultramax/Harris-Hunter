@@ -30,8 +30,8 @@ function Collect-Process {
         $comm = $null
         try { $comm = (Get-Content -LiteralPath "/proc/$procId/comm" -Raw -ErrorAction Stop).Trim() } catch { }
 
-        $ppid = Get-HHProcStatusField -Pid $procId -Field 'PPid'
-        $uidLine = Get-HHProcStatusField -Pid $procId -Field 'Uid'   # "real eff saved fs"
+        $ppid = Get-HHProcStatusField -ProcessId $procId -Field 'PPid'
+        $uidLine = Get-HHProcStatusField -ProcessId $procId -Field 'Uid'   # "real eff saved fs"
         $uid = if ($uidLine) { ($uidLine -split '\s+')[0] } else { $null }
         $user = ConvertFrom-HHUid -Uid $uid
 

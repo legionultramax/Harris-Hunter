@@ -90,7 +90,14 @@ on every record and the manifest, giving unbroken provenance.
 - **Per-file hash** — each `artifacts/<type>.json` and each raw file in `files/` is SHA-256'd into the manifest.
 - **Bundle hash** — `bundle_sha256` is a deterministic hash over the sorted set of all file hashes (artifacts + evidence files), so it is independent of collection order.
 - **Custody ledger** — `coc.jsonl` is append-only and hash-chained: every entry embeds the previous entry's hash, so any edit/removal/reorder is detectable.
-- **Re-verification** — `Test-EvidenceBundle` re-hashes every artifact and evidence file, recomputes the bundle hash, and walks the custody chain. `Test-ChainOfCustody` checks the ledger alone.
+- **Manifest anchor** — the `bundle_sealed` ledger event records `manifest.json`'s hash, so re-verification cross-checks the manifest against the tamper-evident ledger. This catches a *consistent* edit of an artifact + manifest (one that keeps the manifest internally self-consistent).
+- **Re-verification** — `Test-EvidenceBundle` re-hashes every artifact and evidence file, recomputes the bundle hash, walks the custody chain, and anchors the manifest to the ledger. `Test-ChainOfCustody` checks the ledger alone.
+
+> **Tamper-evident, not tamper-proof:** the custody ledger has no external anchor, so an attacker
+> who controls the sealed bundle and recomputes the whole chain could still forge it. True
+> tamper-proofing requires the roadmap's **WORM evidence tier** or an **offline signature** over
+> `bundle_sha256`. The optional AES-256-CBC transport encryption protects confidentiality in
+> transit; it is not itself authenticated — rely on the in-bundle hashes for integrity after decryption.
 
 ## Data minimization
 
@@ -183,10 +190,10 @@ pwsh -File ./tools/Invoke-Example.ps1 -Profile standard
 Invoke-Pester -Path ./tests/HaarisHunter.Tests.ps1
 ```
 
-`Verify-Framework.ps1` proves (**38 checks**): module import + public surface, hashing, schema
+`Verify-Framework.ps1` proves (**39 checks**): module import + public surface, hashing, schema
 (incl. empty-attack normalization), all authorization paths, end-to-end seal, bundle
 re-verification (artifacts + evidence files), same-name evidence de-collision, artifact +
-evidence-file + custody-ledger tamper detection, and the AES round-trip.
+evidence-file + **manifest-anchor** + custody-ledger tamper detection, and the AES round-trip.
 
 ## Layout
 

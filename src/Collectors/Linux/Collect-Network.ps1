@@ -11,7 +11,7 @@ function Collect-Network {
                 if (-not $line.Trim()) { continue }
                 $f = $line -split '\s+'
                 if ($f.Count -lt 6) { continue }
-                $procPart = ($f[6..($f.Count - 1)] -join ' ')
+                $procPart = if ($f.Count -gt 6) { ($f[6..($f.Count - 1)] -join ' ') } else { '' }
                 $pid = $null; $pname = $null
                 $pm = [regex]::Match($procPart, 'pid=(\d+)'); if ($pm.Success) { $pid = [int]$pm.Groups[1].Value }
                 $nm = [regex]::Match($procPart, '"([^"]+)"'); if ($nm.Success) { $pname = $nm.Groups[1].Value }
