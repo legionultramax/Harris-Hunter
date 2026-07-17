@@ -32,6 +32,8 @@ HH_<engagement>_<host>_<timestamp>/
 │                      #   per-artifact hashes, deterministic bundle_sha256
 ├── artifacts/
 │   └── <type>.json    # one file per artifact type, each individually SHA-256'd
+├── files/             # raw evidence files (e.g. exported .evtx), each SHA-256'd
+│   └── evtx/ ...      #   folded into the manifest + bundle hash + custody ledger
 ├── bundle.json        # convenience: manifest + all records inline (ingestion-ready)
 ├── coc.jsonl          # append-only, hash-chained chain-of-custody ledger
 ├── haaris-hunter.log  # run log
@@ -55,13 +57,13 @@ ATT&CK where it is cheap.
 | WmiPersistence | `__EventFilter`/`__EventConsumer`/binding | T1546.003 |
 | Accounts | local users, group membership, privileges | T1098 |
 | AuthEvents | recent Security logon events (capped, 7d) | T1078, T1110 |
-| EventLogs | log inventory + capped PowerShell/Sysmon/System events | T1059.001 |
+| EventLogs | log inventory + capped PowerShell/Sysmon/System events; **raw .evtx export in `deep`** | T1059.001 |
 | Filesystem | Prefetch, drop-dir executables, Amcache pointer | T1204 |
 | DefenderState | status, **exclusions**, threat history, tamper protection | T1562.001 |
 | BitsJobs | BITS transfer jobs + URLs | T1197 |
 | MemoryHints | pagefile/RAM/crash-dump config (pointers, not capture) | — |
 | Wireless | Wi-Fi profiles (keys **only in `full` mode**) | T1552.001 |
-| BrowserHistory | history-store files + hashes (**`full` mode only**) | T1217 |
+| BrowserHistory | raw DB capture + extracted URL/domain IOC surface (**`full` mode only**) | T1217 |
 
 ## Requirements
 
@@ -71,10 +73,11 @@ ATT&CK where it is cheap.
   and record an explicit note rather than failing the run.
 - No third-party modules required at runtime (Pester 5 is only needed to run the CI tests)
 
-> **Performance note:** `Process` and `Services` compute a SHA-256 **and an Authenticode
-> signature** for every image; Authenticode does online certificate-revocation lookups, so a
-> full run can take several minutes on a busy host (hashes are cached per path). Parallel
-> hashing / an offline-revocation fast path is a Phase 1.x optimization.
+> **Performance note:** file evidence (SHA-256 + Authenticode) is cached per image path, so a
+> full run is typically well under a minute. Process owner attribution uses a single
+> `Get-Process -IncludeUserName` call (fast, needs elevation) rather than a per-process WMI
+> `GetOwner` (~0.5s each); non-elevated runs simply leave `owner` null. Raw `.evtx` export
+> (`deep` profile) adds bundle size proportional to log volume.
 
 ## Quick start
 

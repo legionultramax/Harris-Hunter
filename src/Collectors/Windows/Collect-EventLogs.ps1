@@ -52,5 +52,36 @@ function Collect-EventLogs {
         }
     }
 
+    # --- Raw EVTX export (deep profile only; large, and needs elevation for Security) ---
+    # Full logs go into the bundle's evidence-file sink for offline analysis, hashed into the
+    # manifest. Gated to 'deep' so quick/standard bundles stay small.
+    if ($Context.Profile -eq 'deep') {
+        $rawLogs = @(
+            'Security', 'System', 'Application',
+            'Microsoft-Windows-PowerShell/Operational',
+            'Microsoft-Windows-Sysmon/Operational',
+            'Microsoft-Windows-TaskScheduler/Operational',
+            'Microsoft-Windows-Windows Defender/Operational',
+            'Microsoft-Windows-TerminalServices-LocalSessionManager/Operational'
+        )
+        foreach ($log in $rawLogs) {
+            $tmp = Join-Path ([IO.Path]::GetTempPath()) ("hh_evtx_" + [guid]::NewGuid().ToString('N') + '.evtx')
+            try {
+                & wevtutil epl "$log" "$tmp" /ow:true 2>$null
+                if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $tmp)) {
+                    $safeName = ($log -replace '[\\/]', '_') + '.evtx'
+                    $added = Add-EvidenceFile -SourcePath $tmp -Category 'evtx' -Name $safeName
+                    if ($added) {
+                        $records.Add((New-EvidenceRecord -ArtifactType 'evtx_export' -Collector 'Collect-EventLogs' `
+                            -Source "wevtutil epl $log" -Context $Context -Data @{
+                                log = $log; file = $added.file; size = $added.size; sha256 = $added.sha256
+                            }))
+                    }
+                }
+            } catch { }
+            finally { if (Test-Path -LiteralPath $tmp -ErrorAction SilentlyContinue) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue } }
+        }
+    }
+
     return $records.ToArray()
 }

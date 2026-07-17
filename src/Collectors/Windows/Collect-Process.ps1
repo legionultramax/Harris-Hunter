@@ -9,13 +9,18 @@ function Collect-Process {
     $procs = @()
     try { $procs = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop } catch { return @() }
 
-    # Owner lookups are expensive; do them once per process via the CIM method.
+    # Build a pid -> owner map in ONE call. Per-process Win32_Process.GetOwner is ~0.5s each
+    # (minutes across a host); Get-Process -IncludeUserName is a single fast enumeration but
+    # needs elevation. Non-elevated runs leave owner null rather than pay the per-process cost.
+    $ownerMap = @{}
+    try {
+        Get-Process -IncludeUserName -ErrorAction Stop | ForEach-Object {
+            if ($null -ne $_.Id) { $ownerMap[[int]$_.Id] = $_.UserName }
+        }
+    } catch { }
+
     foreach ($p in $procs) {
-        $owner = $null
-        try {
-            $o = Invoke-CimMethod -InputObject $p -MethodName GetOwner -ErrorAction Stop
-            if ($o -and $o.User) { $owner = if ($o.Domain) { "$($o.Domain)\$($o.User)" } else { $o.User } }
-        } catch { }
+        $owner = if ($ownerMap.ContainsKey([int]$p.ProcessId)) { $ownerMap[[int]$p.ProcessId] } else { $null }
 
         $imagePath = $p.ExecutablePath
         if (-not $imagePath -and $p.CommandLine) { $imagePath = Resolve-HHImagePath -CommandLine $p.CommandLine }

@@ -76,6 +76,29 @@ function Get-HHFileEvidence {
     return $result
 }
 
+function Read-HHFileBytesShared {
+    <#
+    .SYNOPSIS
+        Read up to MaxBytes of a file with FileShare.ReadWrite so live-locked files (e.g. a
+        browser History DB held open by the browser) can still be read. Returns byte[] or $null.
+    #>
+    param([Parameter(Mandatory)][string]$Path, [int]$MaxBytes = 52428800)
+    try {
+        $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            $len = [int][Math]::Min([long]$fs.Length, [long]$MaxBytes)
+            $buf = New-Object byte[] $len
+            $off = 0
+            while ($off -lt $len) {
+                $n = $fs.Read($buf, $off, $len - $off)
+                if ($n -le 0) { break }
+                $off += $n
+            }
+            if ($off -eq $len) { return $buf } else { return $buf[0..($off - 1)] }
+        } finally { $fs.Dispose() }
+    } catch { return $null }
+}
+
 function Get-HHRegValues {
     <#
     .SYNOPSIS

@@ -103,7 +103,18 @@ Assert-That "IP-scope match PASSES" ((Assert-Authorization -Engagement @{ engage
 
 # --- Two in-memory collectors: include order (Zeta,Alpha) != file order (alpha,zeta) ---
 function global:Collect-Zeta  { param($Context) New-EvidenceRecord -ArtifactType 'zeta'  -Collector 'Collect-Zeta'  -Attack @('T1059') -Data @{ v = 1 } -Context $Context }
-function global:Collect-Alpha { param($Context) New-EvidenceRecord -ArtifactType 'alpha' -Collector 'Collect-Alpha' -Attack @()        -Data @{ v = 2 } -Context $Context }
+function global:Collect-Alpha {
+    param($Context)
+    # Contribute TWO raw files with the SAME requested name to exercise the sink's collision
+    # de-duplication (distinct sources must not overwrite each other or false-flag tampering).
+    foreach ($v in 'evidence-bytes-1', 'evidence-bytes-2') {
+        $tmp = Join-Path ([IO.Path]::GetTempPath()) ("hh_ev_" + [guid]::NewGuid().ToString('N') + '.bin')
+        Set-Content -LiteralPath $tmp -Value $v -Encoding utf8
+        $null = Add-EvidenceFile -SourcePath $tmp -Category 'test' -Name 'sample.bin'
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    }
+    New-EvidenceRecord -ArtifactType 'alpha' -Collector 'Collect-Alpha' -Attack @() -Data @{ v = 2 } -Context $Context
+}
 
 $script:eng = Join-Path ([IO.Path]::GetTempPath()) 'hh_verify_eng.json'
 New-EngagementFile -Path $script:eng
@@ -117,14 +128,22 @@ foreach ($f in 'manifest.json','coc.jsonl','bundle.json','report.html','haaris-h
     Assert-That "output has $f" (Test-Path (Join-Path $out $f))
 }
 Assert-That "both artifacts written" ((Test-Path (Join-Path $out 'artifacts/alpha.json')) -and (Test-Path (Join-Path $out 'artifacts/zeta.json')))
+Assert-That "raw evidence files captured into bundle" (Test-Path (Join-Path $out 'files/test/sample.bin'))
+$man5 = Get-Content (Join-Path $out 'manifest.json') -Raw | ConvertFrom-Json
+Assert-That "same-named evidence files de-collide (2 distinct)" (@($man5.evidence_files).Count -ge 2 -and (@($man5.evidence_files.sha256 | Sort-Object -Unique).Count -eq @($man5.evidence_files).Count))
 $verify = Test-EvidenceBundle -BundlePath $out
-Assert-That "sealed bundle re-verifies (order-independent hash)" ($verify.Valid) ($verify.Problems -join '; ')
+Assert-That "sealed bundle re-verifies (artifacts + evidence files)" ($verify.Valid) ($verify.Problems -join '; ')
 Assert-That "custody chain intact" ($verify.CocValid -eq $true)
 
 # --- Tamper detection ---
 Write-Host "`n[6] Tamper detection" -ForegroundColor Cyan
 Add-Content -LiteralPath (Join-Path $out 'artifacts/alpha.json') -Value ' '
 Assert-That "artifact tampering detected" (-not (Test-EvidenceBundle -BundlePath $out).Valid)
+
+$outE = New-TempDir
+Invoke-VerifyRun -OutputPath $outE | Out-Null
+Add-Content -LiteralPath (Join-Path $outE 'files/test/sample.bin') -Value 'x'
+Assert-That "evidence-file tampering detected" (-not (Test-EvidenceBundle -BundlePath $outE).Valid)
 
 $out2 = New-TempDir
 Invoke-VerifyRun -OutputPath $out2 | Out-Null
@@ -150,7 +169,7 @@ Assert-That "wrong passphrase rejected" (-not $wrongOk)
 
 # --- Cleanup ---
 Remove-Item Function:\Collect-Zeta, Function:\Collect-Alpha -ErrorAction SilentlyContinue
-foreach ($d in $out,$out2,$out3) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+foreach ($d in $out,$outE,$out2,$out3) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
 Remove-Item -LiteralPath $enc -Force -ErrorAction SilentlyContinue
 
 Write-Host ("`n==== {0} passed, {1} failed ====" -f $script:Pass, $script:Fail) -ForegroundColor $(if ($script:Fail){'Red'}else{'Green'})

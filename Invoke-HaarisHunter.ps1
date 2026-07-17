@@ -36,6 +36,7 @@ function Invoke-HaarisHunter {
     # --- Logging + custody ---
     Initialize-HHLogging -OutputPath $OutputPath -MinLevel $LogLevel
     Initialize-ChainOfCustody -OutputPath $OutputPath
+    Initialize-EvidenceFiles -OutputPath $OutputPath
 
     Write-HHLog -Level Info -Message "HAARIS-HUNTER v$($config.ToolVersion) starting | engagement=$($config.Engagement['engagement_id']) | profile=$($config.Profile) | mode=$($config.CollectionMode)"
     Write-HHLog -Level Info -Message "Output: $OutputPath"
@@ -78,6 +79,7 @@ function Invoke-HaarisHunter {
         EngagementId   = $config.Engagement['engagement_id']
         Engagement     = $config.Engagement
         CollectionMode = $config.CollectionMode
+        Profile        = $config.Profile
         Constants      = $config.Constants
     }
 

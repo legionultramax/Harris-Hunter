@@ -4,6 +4,20 @@
 # the custody ledger. Test-EvidenceBundle re-verifies the whole thing; Protect/Unprotect
 # provide optional AES-256 transport encryption (carried over from Live-Forensicator).
 
+function Get-HHBundleHashInput {
+    <#
+    .SYNOPSIS
+        Build the canonical, order-independent input string for the bundle hash from the set
+        of hashed files (JSON artifacts + raw evidence files). Used by BOTH Seal-EvidenceBundle
+        and Test-EvidenceBundle so their hashes always agree.
+    #>
+    param($Artifacts, $EvidenceFiles)
+    $lines = [System.Collections.Generic.List[string]]::new()
+    foreach ($a in @($Artifacts))     { if ($a) { $lines.Add("$($a.file):$($a.sha256)") } }
+    foreach ($e in @($EvidenceFiles)) { if ($e) { $lines.Add("$($e.file):$($e.sha256)") } }
+    return (($lines | Sort-Object) -join "`n")
+}
+
 function Seal-EvidenceBundle {
     <#
     .SYNOPSIS
@@ -35,6 +49,9 @@ function Seal-EvidenceBundle {
 
     if ($RunStats) { $RunStats.FinishedUtc = [DateTime]::UtcNow }
 
+    # Raw evidence files (e.g. exported .evtx) contributed by collectors via Add-EvidenceFile.
+    $evidenceFiles = @(Get-HHEvidenceFiles)
+
     $manifest = [ordered]@{
         bundle_id       = [guid]::NewGuid().ToString()
         tool            = $Context.ToolName
@@ -61,16 +78,15 @@ function Seal-EvidenceBundle {
         time_integrity  = $TimeIntegrity
         run_stats       = $RunStats
         artifacts       = $artifactEntries.ToArray()
+        evidence_files  = $evidenceFiles
         coc_ledger      = 'coc.jsonl'
         log_file        = 'haaris-hunter.log'
     }
 
-    # Deterministic bundle hash: sort artifact entries by file, hash "file:sha256" lines.
-    # NB: use a scriptblock sort key - Sort-Object -Property 'file' does NOT sort ordered
-    # dictionaries (it can't see hashtable keys as properties), which would desync this from
-    # Test-EvidenceBundle's recompute over the JSON-read objects.
-    $concat = ($artifactEntries | Sort-Object { $_.file } | ForEach-Object { "$($_.file):$($_.sha256)" }) -join "`n"
-    $manifest['bundle_sha256'] = 'sha256:' + (Get-HHStringHash -InputString $concat)
+    # Deterministic bundle hash over every hashed file (JSON artifacts + raw evidence files).
+    # Build "file:sha256" strings and sort the STRINGS, so seal and Test-EvidenceBundle produce
+    # identical input regardless of in-memory type (OrderedDictionary vs JSON PSCustomObject).
+    $manifest['bundle_sha256'] = 'sha256:' + (Get-HHStringHash -InputString (Get-HHBundleHashInput -Artifacts $artifactEntries -EvidenceFiles $evidenceFiles))
 
     $manifestPath = Join-Path $OutputPath 'manifest.json'
     $manifest | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $manifestPath -Encoding utf8
@@ -101,10 +117,14 @@ function Test-EvidenceBundle {
 
     $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding utf8 | ConvertFrom-Json
 
-    foreach ($a in $manifest.artifacts) {
+    $evidenceFiles = @()
+    if ($manifest.PSObject.Properties['evidence_files']) { $evidenceFiles = @($manifest.evidence_files) }
+
+    foreach ($a in (@($manifest.artifacts) + $evidenceFiles)) {
+        if (-not $a) { continue }
         $file = Join-Path $BundlePath ($a.file -replace '/', [IO.Path]::DirectorySeparatorChar)
         if (-not (Test-Path -LiteralPath $file)) {
-            $problems.Add("missing artifact file: $($a.file)")
+            $problems.Add("missing file: $($a.file)")
             continue
         }
         $actual = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLower()
@@ -113,8 +133,7 @@ function Test-EvidenceBundle {
         }
     }
 
-    $concat   = ($manifest.artifacts | Sort-Object { $_.file } | ForEach-Object { "$($_.file):$($_.sha256)" }) -join "`n"
-    $expected = 'sha256:' + (Get-HHStringHash -InputString $concat)
+    $expected = 'sha256:' + (Get-HHStringHash -InputString (Get-HHBundleHashInput -Artifacts $manifest.artifacts -EvidenceFiles $evidenceFiles))
     if ($expected -ne $manifest.bundle_sha256) {
         $problems.Add("bundle_sha256 mismatch: manifest=$($manifest.bundle_sha256) recomputed=$expected")
     }

@@ -32,6 +32,7 @@ $publicFunctions = @(
     'Assert-Authorization',
     'New-EvidenceRecord',
     'Test-EvidenceRecord',
+    'Add-EvidenceFile',
     'Get-HHConfiguration',
     'Get-HostMetadata',
     'Get-TimeIntegrity',
