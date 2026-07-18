@@ -19,8 +19,28 @@ function Collect-Process {
         }
     } catch { }
 
+    # Lineage maps: pid -> name/image and a child tally, so each record carries its parent's
+    # identity and how many children it spawned (tree reconstruction for downstream detection).
+    $nameByPid  = @{}
+    $imageByPid = @{}
+    $childCount = @{}
+    foreach ($p in $procs) {
+        if ($null -ne $p.ProcessId) {
+            $nameByPid[[int]$p.ProcessId]  = $p.Name
+            $imageByPid[[int]$p.ProcessId] = $p.ExecutablePath
+        }
+        if ($null -ne $p.ParentProcessId) {
+            $ppidKey = [int]$p.ParentProcessId
+            $childCount[$ppidKey] = 1 + $(if ($childCount.ContainsKey($ppidKey)) { $childCount[$ppidKey] } else { 0 })
+        }
+    }
+
     foreach ($p in $procs) {
         $owner = if ($ownerMap.ContainsKey([int]$p.ProcessId)) { $ownerMap[[int]$p.ProcessId] } else { $null }
+        $ppidKey = if ($null -ne $p.ParentProcessId) { [int]$p.ParentProcessId } else { $null }
+        $parentName  = if ($null -ne $ppidKey -and $nameByPid.ContainsKey($ppidKey))  { $nameByPid[$ppidKey] }  else { $null }
+        $parentImage = if ($null -ne $ppidKey -and $imageByPid.ContainsKey($ppidKey)) { $imageByPid[$ppidKey] } else { $null }
+        $kids = if ($null -ne $p.ProcessId -and $childCount.ContainsKey([int]$p.ProcessId)) { $childCount[[int]$p.ProcessId] } else { 0 }
 
         $imagePath = $p.ExecutablePath
         if (-not $imagePath -and $p.CommandLine) { $imagePath = Resolve-HHImagePath -CommandLine $p.CommandLine }
@@ -35,6 +55,9 @@ function Collect-Process {
                 pid              = $p.ProcessId
                 ppid             = $p.ParentProcessId
                 name             = $p.Name
+                parent_name      = $parentName
+                parent_image     = $parentImage
+                child_count      = $kids
                 image_path       = $ev.path
                 command_line     = $p.CommandLine
                 owner            = $owner

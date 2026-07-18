@@ -33,7 +33,7 @@ $script:RealCollectors = @(
     'Accounts','AuthEvents','EventLogs','Filesystem','DefenderState','BitsJobs','MemoryHints',
     'Wireless','BrowserHistory',
     # Linux
-    'SystemdUnits','Cron','InitScripts','SshKeys','Sudoers','AuthLogs','ShellHistory',
+    'SystemdUnits','Cron','InitScripts','SshKeys','Sudoers','AuthLogs','SystemLogs','ShellHistory',
     'SuidSgid','KernelModules','PackageIntegrity','Containers'
 )
 

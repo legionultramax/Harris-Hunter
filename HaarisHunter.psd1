@@ -1,6 +1,6 @@
-@{
+﻿@{
     RootModule           = 'HaarisHunter.psm1'
-    ModuleVersion        = '0.2.0'
+    ModuleVersion        = '0.2.1'
     GUID                 = 'a3874b73-63a4-4cc7-b8ae-67d56aae85e7'
     Author               = 'Cyber Gate Defense - DFIR / Threat Hunting'
     CompanyName          = 'Cyber Gate Defense'
@@ -36,3 +36,4 @@
         SchemaVersion = '1.0'
     }
 }
+

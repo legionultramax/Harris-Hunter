@@ -28,14 +28,14 @@
       ],
       "standard": [
         "System", "Process", "Network", "SystemdUnits", "Cron",
-        "Accounts", "Sudoers", "SshKeys", "AuthLogs", "KernelModules",
-        "SuidSgid", "MemoryHints", "Containers"
+        "Accounts", "Sudoers", "SshKeys", "AuthLogs", "SystemLogs",
+        "KernelModules", "SuidSgid", "MemoryHints", "Containers"
       ],
       "deep": [
         "System", "Process", "Network", "SystemdUnits", "Cron",
         "InitScripts", "Accounts", "Sudoers", "SshKeys", "AuthLogs",
-        "ShellHistory", "KernelModules", "SuidSgid", "PackageIntegrity",
-        "Filesystem", "MemoryHints", "Containers"
+        "SystemLogs", "ShellHistory", "KernelModules", "SuidSgid",
+        "PackageIntegrity", "Filesystem", "MemoryHints", "Containers"
       ]
     }
   },

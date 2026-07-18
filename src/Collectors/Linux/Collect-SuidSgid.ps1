@@ -22,13 +22,28 @@ function Collect-SuidSgid {
         }
     }
 
-    # File capabilities (getcap) - cap_setuid/cap_net_raw etc. can grant escalation.
+    # File capabilities (getcap) - cap_setuid/cap_net_raw etc. can grant escalation. Parse the
+    # path + capability set and flag dangerous capabilities so downstream detection can act on
+    # structured fields, not just a raw line. Handles both `path caps` and `path = caps` formats.
     if (Test-HHCommand 'getcap') {
         try {
             foreach ($line in (& getcap -r / 2>$null | Select-Object -First $cap)) {
-                if (-not $line.Trim()) { continue }
+                $t = if ($line) { $line.Trim() } else { '' }
+                if (-not $t) { continue }
+                $capPath = $null; $caps = $null
+                $m = [regex]::Match($t, '^(?<p>\S+)\s*=?\s*(?<c>.+)$')
+                if ($m.Success) { $capPath = $m.Groups['p'].Value; $caps = $m.Groups['c'].Value.Trim() }
+                $dangerous = ($caps -match '(?i)cap_(setuid|setgid|sys_admin|dac_override|dac_read_search|sys_ptrace|sys_module)')
+                $ev = if ($capPath) { Get-HHLinuxFileEvidence -Path $capPath } else { $null }
                 $records.Add((New-EvidenceRecord -ArtifactType 'file_capability' -Collector 'Collect-SuidSgid' `
-                    -Source 'getcap -r /' -Attack @('T1548.001') -Context $Context -Data @{ raw = $line.Trim() }))
+                    -Source 'getcap -r /' -Attack @('T1548.001') -Context $Context -Data @{
+                        path         = $capPath
+                        capabilities = $caps
+                        dangerous    = $dangerous
+                        owner        = if ($ev) { $ev.owner } else { $null }
+                        sha256       = if ($ev) { $ev.sha256 } else { $null }
+                        raw          = $t
+                    }))
             }
         } catch { }
     }
