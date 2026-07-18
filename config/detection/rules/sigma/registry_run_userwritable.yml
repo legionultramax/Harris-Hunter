@@ -1,0 +1,28 @@
+title: Registry Run Key Pointing to User-Writable Path (Recently Modified)
+id: 7d2f9e11-ca-win-0021
+status: stable
+description: A Run/RunOnce autostart whose target lives in a user-writable path and was created within the scan window - a common userland persistence pattern.
+finding_type: persistence.registry_run
+confidence: medium
+logsource:
+  product: sentinel_ca
+  category: persistence_inventory
+detection:
+  selection:
+    persistence.mechanism: 'registry_run'
+    persistence.value|contains:
+      - '\AppData\'
+      - '\Temp\'
+      - '\Users\Public\'
+      - '\ProgramData\'
+  timeframe_filter:
+    persistence.created|gte: 'scan_window_start'
+  condition: selection and timeframe_filter
+level: high
+tags:
+  - attack.persistence
+  - attack.t1547.001
+falsepositives:
+  - Legitimate installers that stage into ProgramData - verify against tenant exception list
+references:
+  - CGD-CA-DESIGN-001 section 27

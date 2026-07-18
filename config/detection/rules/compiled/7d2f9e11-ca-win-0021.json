@@ -1,0 +1,66 @@
+{
+    "id":  "7d2f9e11-ca-win-0021",
+    "title":  "Registry Run Key Pointing to User-Writable Path (Recently Modified)",
+    "status":  "stable",
+    "description":  "A Run/RunOnce autostart whose target lives in a user-writable path and was created within the scan window - a common userland persistence pattern.",
+    "level":  "high",
+    "severity":  "high",
+    "confidence":  "medium",
+    "engine":  "sigma",
+    "finding_type":  "persistence.registry_run",
+    "logsource":  {
+                      "category":  "persistence_inventory",
+                      "product":  "sentinel_ca"
+                  },
+    "attack":  "T1547.001",
+    "selections":  {
+                       "selection":  [
+                                         {
+                                             "field":  "persistence.mechanism",
+                                             "modifiers":  [
+
+                                                           ],
+                                             "values":  [
+                                                            "registry_run"
+                                                        ]
+                                         },
+                                         {
+                                             "field":  "persistence.value",
+                                             "modifiers":  [
+                                                               "contains"
+                                                           ],
+                                             "values":  [
+                                                            "\\AppData\\",
+                                                            "\\Temp\\",
+                                                            "\\Users\\Public\\",
+                                                            "\\ProgramData\\"
+                                                        ]
+                                         }
+                                     ],
+                       "timeframe_filter":  [
+                                                {
+                                                    "field":  "persistence.created",
+                                                    "modifiers":  [
+                                                                      "gte"
+                                                                  ],
+                                                    "values":  [
+                                                                   "scan_window_start"
+                                                               ]
+                                                }
+                                            ]
+                   },
+    "condition":  "selection and timeframe_filter",
+    "condition_ast":  {
+                          "type":  "and",
+                          "left":  {
+                                       "type":  "sel",
+                                       "name":  "selection"
+                                   },
+                          "right":  {
+                                        "type":  "sel",
+                                        "name":  "timeframe_filter"
+                                    }
+                      },
+    "source_file":  "registry_run_userwritable.yml",
+    "compiled_at":  "2026-07-18T15:35:17.4405777Z"
+}

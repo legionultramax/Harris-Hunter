@@ -1,0 +1,33 @@
+title: Cron Entry With Remote Download and Execute Pattern
+id: 9c4e1b2a-ca-lnx-0007
+status: stable
+description: Cron/crontab entry fetching and executing remote content - a common commodity-malware and post-exploitation persistence pattern.
+finding_type: persistence.cron
+confidence: high
+logsource:
+  product: sentinel_ca
+  category: persistence_inventory
+detection:
+  selection_mechanism:
+    persistence.mechanism|contains: 'cron'
+  selection_pattern:
+    persistence.value|contains:
+      - 'curl '
+      - 'wget '
+  selection_exec:
+    persistence.value|contains:
+      - '| sh'
+      - '| bash'
+      - '&& sh'
+      - 'base64 -d'
+  condition: selection_mechanism and selection_pattern and selection_exec
+level: high
+tags:
+  - attack.persistence
+  - attack.t1053.003
+  - attack.execution
+  - attack.t1059.004
+falsepositives:
+  - Legitimate bootstrap or config-management jobs - verify against tenant exception list
+references:
+  - CGD-CA-DESIGN-001 section 27

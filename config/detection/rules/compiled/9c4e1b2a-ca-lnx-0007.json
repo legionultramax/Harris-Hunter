@@ -1,0 +1,79 @@
+{
+    "id":  "9c4e1b2a-ca-lnx-0007",
+    "title":  "Cron Entry With Remote Download and Execute Pattern",
+    "status":  "stable",
+    "description":  "Cron/crontab entry fetching and executing remote content - a common commodity-malware and post-exploitation persistence pattern.",
+    "level":  "high",
+    "severity":  "high",
+    "confidence":  "high",
+    "engine":  "sigma",
+    "finding_type":  "persistence.cron",
+    "logsource":  {
+                      "category":  "persistence_inventory",
+                      "product":  "sentinel_ca"
+                  },
+    "attack":  [
+                   "T1053.003",
+                   "T1059.004"
+               ],
+    "selections":  {
+                       "selection_mechanism":  [
+                                                   {
+                                                       "field":  "persistence.mechanism",
+                                                       "modifiers":  [
+                                                                         "contains"
+                                                                     ],
+                                                       "values":  [
+                                                                      "cron"
+                                                                  ]
+                                                   }
+                                               ],
+                       "selection_pattern":  [
+                                                 {
+                                                     "field":  "persistence.value",
+                                                     "modifiers":  [
+                                                                       "contains"
+                                                                   ],
+                                                     "values":  [
+                                                                    "curl ",
+                                                                    "wget "
+                                                                ]
+                                                 }
+                                             ],
+                       "selection_exec":  [
+                                              {
+                                                  "field":  "persistence.value",
+                                                  "modifiers":  [
+                                                                    "contains"
+                                                                ],
+                                                  "values":  [
+                                                                 "| sh",
+                                                                 "| bash",
+                                                                 "\u0026\u0026 sh",
+                                                                 "base64 -d"
+                                                             ]
+                                              }
+                                          ]
+                   },
+    "condition":  "selection_mechanism and selection_pattern and selection_exec",
+    "condition_ast":  {
+                          "type":  "and",
+                          "left":  {
+                                       "type":  "and",
+                                       "left":  {
+                                                    "type":  "sel",
+                                                    "name":  "selection_mechanism"
+                                                },
+                                       "right":  {
+                                                     "type":  "sel",
+                                                     "name":  "selection_pattern"
+                                                 }
+                                   },
+                          "right":  {
+                                        "type":  "sel",
+                                        "name":  "selection_exec"
+                                    }
+                      },
+    "source_file":  "cron_download_execute.yml",
+    "compiled_at":  "2026-07-18T15:35:17.2621026Z"
+}
