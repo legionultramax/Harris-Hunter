@@ -16,10 +16,10 @@ Runs on **Windows PowerShell 5.1 and PowerShell 7+** (no install on stock Window
 | Area | State |
 |---|---|
 | **Core Framework** | Complete — schema, config, authorization gate, logging + SHA-256, hash-chained chain-of-custody + time integrity, statistics, evidence writer (+ AES), evidence-file sink |
-| **Windows collectors** | 16 collectors — verified on a live host (deep run: 16 collectors, ~5.6k records, 0 failed, bundle re-verifies) |
-| **Linux collectors** | 17 collectors — built + parse-clean; **field-test pending** (dev host had no Linux runtime) |
-| **Framework verifier** | `tools/Verify-Framework.ps1` — **38/38 checks, exit 0** on PS 5.1 (OS-neutral) |
-| **Detection engine (Phase 2)** | Not started — consumes the JSON bundle |
+| **Windows collectors** | 16 collectors — verified on a live host (deep run re-verifies); autostart coverage broadened (AppInit/AppCert/Active Setup/Startup folders/print monitors/screensaver) |
+| **Linux collectors** | 18 collectors — built + parse-clean; **field-test pending** (dev host had no Linux runtime) |
+| **Detection engine (Phase 2)** | **Sigma engine delivered** — normalize → Sigma → risk score → `finding.v1` + ATT&CK-heatmap report, read-only over a sealed bundle. IOC / native-DSL / behavioral / ClamAV deferred to later increments |
+| **Framework verifier** | `tools/Verify-Framework.ps1` — **45/45 checks, exit 0** on PS 5.1 (OS-neutral); `tools/Test-DetectionRules.ps1` — rule-lint + fixtures, **10/10** |
 
 ## Design principles
 
@@ -109,6 +109,53 @@ on every record and the manifest, giving unbroken provenance.
 Regardless of mode: everything collected is hashed and recorded in the custody ledger, and
 `/etc/shadow` is **always** captured as metadata only (never password hashes).
 
+## Detection engine (Phase 2 — Sigma)
+
+Detection is a **separate, offline engine that consumes a sealed bundle** — it mirrors the
+server-side pipeline the central platform will run, so the same code moves server-side unchanged
+later. It **verifies the bundle first** (`Test-EvidenceBundle` + `Test-ChainOfCustody`; refuses a
+failed bundle unless `-Force`) and is strictly **read-only** — findings are written to a separate
+`detection/` directory and re-verification of the evidence still passes.
+
+```powershell
+# Compile the Sigma pack -> internal JSON AST (build step; no YAML parser needed at runtime)
+./tools/Convert-SigmaPack.ps1
+
+# Run detection over a sealed bundle
+Invoke-HaarisDetect -BundlePath ./HH_CGD-ENG-1234_<host>_<stamp>
+#   -> detection/findings.json         (finding.v1[])
+#      detection/host-summary.json     (host_scan_summary.v1 + host risk score/band)
+#      detection/detection-report.html (risk band + ATT&CK heatmap + finding breakdowns)
+#      detection/detect.jsonl          (analysis ledger, separate from evidence custody)
+```
+
+**Pipeline:** normalize evidence → run engines → corroborate → **risk-score** → dedup → report.
+
+- **Normalization** maps every artifact type to a Sigma `logsource.category` and a `finding.v1`
+  artifact sub-object with a stable field taxonomy (`docs/field-taxonomy.md`). Multi-entry records
+  (e.g. a cron file's lines) explode into per-entry events; card-like digit runs are redacted.
+- **Sigma** rules are authored in YAML (`config/detection/rules/sigma/`) and **compiled to JSON at
+  build time** by `tools/Convert-SigmaPack.ps1` — so the endpoint runtime parses no YAML and runs
+  clean on **PowerShell 5.1**. Supported subset: `logsource.category` routing; selection maps;
+  modifiers `contains/startswith/endswith/re/gte/lte/cidr/all`; value lists (OR) & maps (AND);
+  `condition` grammar (`and/or/not`, parentheses, `N of sel*`, `all of them`); scan-window recency
+  filters.
+- **Risk scoring** (two-level, per design §14/§28.6): `finding_score = base_severity ×
+  confidence_factor + bounded context modifiers`; `host_score = max finding + ATT&CK-tactic breadth
+  bonus + recency bonus`, banded *clean → confirmed/critical*. Every score stores its computation
+  breakdown. The ATT&CK technique→tactic map is data-driven (`config/detection/attack-map.json`).
+- **Output contract:** `finding.v1` and `host_scan_summary.v1` are emitted verbatim, so the future
+  central platform ingests detection output without engine changes.
+
+**In this increment:** the Sigma path end-to-end. **Deferred to later increments:** the IOC engine,
+the native cross-artifact DSL, behavioral analytics, and the ClamAV/YARA adapter — all slot into the
+orchestrator's pluggable dispatch behind the same `finding.v1` contract.
+
+**Governance / CI:** `tools/Test-DetectionRules.ps1` lints every compiled rule and runs
+known-good/known-bad fixtures (`tests/fixtures/`); `tools/Verify-Framework.ps1 [8]` exercises
+normalize → Sigma → score dependency-free (**45/45**). Detection is honest about coverage: reports
+carry a point-in-time *"absence of evidence ≠ evidence of absence"* assurance statement.
+
 ## Windows collectors
 
 Each collector is fault-isolated (a failure is logged to the custody ledger and skipped, never
@@ -120,7 +167,7 @@ where it is cheap.
 | System | OS, hardware, boot time, hotfixes | — |
 | Process | processes + image SHA-256 + Authenticode + cmdline + owner | T1055, T1059 |
 | Network | TCP/UDP + owning process, DNS cache, adapters, routes, firewall, SMB | — |
-| Autoruns | Run/RunOnce, IFEO, Winlogon, LSA | T1547, T1546 |
+| Autoruns | Run/RunOnce, IFEO, Winlogon, LSA, AppInit/AppCert DLLs, Active Setup, Startup folders, print monitors, screensaver | T1547, T1546 |
 | Services | services + binary hash/signature | T1543.003 |
 | ScheduledTasks | tasks, actions, triggers | T1053.005 |
 | WmiPersistence | `__EventFilter`/`__EventConsumer`/binding | T1546.003 |
@@ -156,8 +203,9 @@ schema, chain-of-custody, evidence-file sink, and reporting are shared with Wind
 | Accounts | passwd/group + **shadow metadata only** (no hashes) | T1136, T1078 |
 | Sudoers | /etc/sudoers(.d) + **NOPASSWD** flagging | T1548.003 |
 | AuthLogs | journald/auth.log/secure — failed/accepted/sudo (capped) | T1078, T1110 |
+| SystemLogs | syslog/messages/audit + journald export, wtmp/btmp capture, log-gap detection | T1070.002, T1562.006 |
 | ShellHistory | bash/zsh/python history (**`full` mode only**) | T1552.003 |
-| SuidSgid | setuid/setgid files + file capabilities | T1548.001 |
+| SuidSgid | setuid/setgid files + **file capabilities** (dangerous-cap flagging) | T1548.001 |
 | KernelModules | /proc/modules + taint state | T1547.006 |
 | PackageIntegrity | rpm -Va / debsums / dpkg --verify | T1565.001 |
 | Filesystem | tmp/var-tmp/dev-shm + world-writable files | T1204, T1222 |
@@ -181,19 +229,23 @@ schema, chain-of-custody, evidence-file sink, and reporting are shared with Wind
 
 ```powershell
 # Dependency-free, OS-neutral, runs on PS 5.1 and 7+, exits non-zero on failure:
-pwsh -File ./tools/Verify-Framework.ps1        # or: powershell -File ...
+pwsh -File ./tools/Verify-Framework.ps1        # framework + detection (45 checks)
+pwsh -File ./tools/Test-DetectionRules.ps1     # Sigma rule-lint + fixtures (10 checks)
 
 # Example / field-test run (creates a permissive engagement, collects, re-verifies):
 pwsh -File ./tools/Invoke-Example.ps1 -Profile standard
 
 # CI (requires Pester 5):
-Invoke-Pester -Path ./tests/HaarisHunter.Tests.ps1
+Invoke-Pester -Path ./tests/HaarisHunter.Tests.ps1 -Path ./tests/Detection.Tests.ps1
 ```
 
-`Verify-Framework.ps1` proves (**39 checks**): module import + public surface, hashing, schema
+`Verify-Framework.ps1` proves (**45 checks**): module import + public surface, hashing, schema
 (incl. empty-attack normalization), all authorization paths, end-to-end seal, bundle
 re-verification (artifacts + evidence files), same-name evidence de-collision, artifact +
-evidence-file + **manifest-anchor** + custody-ledger tamper detection, and the AES round-trip.
+evidence-file + **manifest-anchor** + custody-ledger tamper detection, the AES round-trip, and the
+**detection engine** (normalize → Sigma fires on a user-writable autostart, recency filter excludes
+pre-window entries, finding validates against `finding.v1`, risk math matches §28.6).
+`Test-DetectionRules.ps1` compiles + lints every Sigma rule and runs the known-good/known-bad fixtures.
 
 ## Layout
 
@@ -203,11 +255,16 @@ Invoke-HaarisHunter.ps1       orchestrator / entry point
 config/                       constants, per-OS collection profiles, engagement template
 src/Core/                     Platform, EvidenceSchema, Configuration, AuthorizationGate, Logging,
                               Statistics, ChainOfCustody, EvidenceFiles, EvidenceWriter
-src/Reporting/                JSON bundle writer + HTML report
+src/Detection/                Normalize, FindingSchema, RiskScore + Engines/ (Invoke-SigmaRules)
+Invoke-HaarisDetect.ps1       detection orchestrator (consumes a sealed bundle)
+src/Reporting/                JSON bundle writer + collection HTML report + detection report
 src/Collectors/Windows/       16 collectors + _CollectorHelpers.ps1
-src/Collectors/Linux/         17 collectors + _LinuxHelpers.ps1 (loaded only on Linux)
-tests/                        Pester 5 tests
-tools/Verify-Framework.ps1    dependency-free framework verification (OS-neutral)
+src/Collectors/Linux/         18 collectors + _LinuxHelpers.ps1 (loaded only on Linux)
+config/detection/             Sigma rules (+ compiled JSON), ATT&CK map
+tests/                        Pester 5 tests + fixtures/
+tools/Verify-Framework.ps1    dependency-free framework + detection verification (OS-neutral)
+tools/Convert-SigmaPack.ps1   compile Sigma YAML -> internal JSON rule AST (build step)
+tools/Test-DetectionRules.ps1 Sigma rule-lint + fixture regression
 tools/Invoke-Example.ps1      cross-platform example / field-test runner
 ```
 
@@ -218,7 +275,8 @@ custody). The evidence bundle is the stable contract between phases:
 
 - **Phase 1** — Core Framework + Windows collectors. ✅ Done.
 - **Phase 1.5** — Linux collectors on the same framework. ✅ Built (field-test pending on a Linux host).
-- **Phase 2** — Detection engine consuming the JSON bundle (IOC, Sigma, YARA, native cross-artifact DSL, ATT&CK mapping; C2 / ransomware / lateral-movement / credential-abuse detections).
+- **Phase 1.9** — collector conformance hardening (autostart breadth, Linux system-log capture, process lineage, capabilities). ✅ Done.
+- **Phase 2** — Detection engine consuming the JSON bundle. ✅ **Sigma path delivered** (normalize → Sigma → ATT&CK map → risk score → `finding.v1` + report). ⏳ Next increments: IOC engine, native cross-artifact DSL, behavioral analytics, ClamAV/YARA adapter — all behind the same pluggable dispatch + `finding.v1` contract.
 - **Phase 3+** — Correlation/dedup → Risk engine → Central platform (ingestion API, PostgreSQL findings DB, WORM store, RBAC, multi-tenant).
 
 ## Notes

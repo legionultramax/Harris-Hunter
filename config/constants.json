@@ -1,6 +1,6 @@
 ﻿{
   "tool_name": "HAARIS-HUNTER",
-  "tool_version": "0.2.1",
+  "tool_version": "0.3.0",
   "schema_version": "1.0",
   "design_ref": "CGD-CA-DESIGN-001",
   "hash_algorithm": "SHA256",
@@ -22,4 +22,5 @@
   "collector_timeout_seconds": 300,
   "json_depth": 12
 }
+
 

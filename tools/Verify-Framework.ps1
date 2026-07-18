@@ -179,6 +179,42 @@ try { Unprotect-EvidenceBundle -Path $enc -Passphrase (ConvertTo-SecureString 'w
 catch { $wrongOk = $false }
 Assert-That "wrong passphrase rejected" (-not $wrongOk)
 
+# --- Detection engine (Phase 2: normalize -> Sigma -> finding -> risk) ---
+Write-Host "`n[8] Detection engine" -ForegroundColor Cyan
+& (Join-Path $ModuleRoot 'tools/Convert-SigmaPack.ps1') -Quiet | Out-Null
+$detRules = Import-HHCompiledRules -Path (Join-Path $ModuleRoot 'config/detection/rules/compiled')
+Assert-That "compiled Sigma rules load" ($detRules.Count -ge 1) "loaded=$($detRules.Count)"
+
+# A benign, ordinary user-writable autostart created in-window must fire the registry_run rule.
+$detHost = @{ hostname = 'VERIFY'; os = 'windows'; host_id = 'verify-1' }
+$detRec = [ordered]@{
+    schema_version='1.0'; artifact_type='autorun_run_key'; collector='Collect-Verify'
+    collected_at_utc='2026-07-18T00:00:00Z'; host=$detHost; engagement_id='CGD-VERIFY'
+    source='HKCU..Run'; attack=@('T1547.001')
+    data=@{ location='HKCU\..\Run'; name='Updater'; command='C:\Users\Public\updater.exe'; created='2026-07-15T00:00:00Z' }
+}
+$detEvents = @(ConvertTo-HHNormalizedEvents -Records @($detRec))
+Assert-That "record normalizes to a persistence event" ($detEvents.Count -eq 1 -and $detEvents[0].category -eq 'persistence_inventory')
+
+$detFindings = @(Invoke-SigmaRules -Events $detEvents -Rules $detRules -ScanWindowStart ([datetime]'2026-07-01T00:00:00Z') -ScanWindowEnd ([datetime]'2026-07-18T00:00:00Z') -FindingArgs @{})
+Assert-That "Sigma fires on user-writable autostart" ($detFindings.Count -eq 1 -and $detFindings[0]['finding_type'] -eq 'persistence.registry_run')
+Assert-That "finding validates against finding.v1" ($detFindings.Count -ge 1 -and (Test-Finding -Finding $detFindings[0]))
+
+# Recency filter: same record with an out-of-window created date must NOT fire.
+$detRecOld = [ordered]@{
+    schema_version='1.0'; artifact_type='autorun_run_key'; collector='Collect-Verify'
+    collected_at_utc='2026-07-18T00:00:00Z'; host=$detHost; engagement_id='CGD-VERIFY'
+    source='HKCU..Run'; attack=@('T1547.001')
+    data=@{ location='HKCU\..\Run'; name='Old'; command='C:\Users\Public\old.exe'; created='2026-01-01T00:00:00Z' }
+}
+$detOld = @(Invoke-SigmaRules -Events @(ConvertTo-HHNormalizedEvents -Records @($detRecOld)) -Rules $detRules -ScanWindowStart ([datetime]'2026-07-01T00:00:00Z') -FindingArgs @{})
+Assert-That "recency/timeframe filter excludes pre-window autostart" ($detOld.Count -eq 0) "count=$($detOld.Count)"
+
+# Risk math (blueprint section 28.6): high(70) x medium(0.7) = 49; +10 crown_jewel => 59.
+$rf = [ordered]@{ severity='high'; confidence='medium'; observed_at='2026-07-15T00:00:00Z'; host=@{ asset_criticality='crown_jewel' }; detection=@{ engine='sigma'; mitre_attack=@() }; risk_score=$null }
+Get-HHRiskScore -Finding $rf | Out-Null
+Assert-That "finding risk math (70*0.7 + 10 crown_jewel = 59)" ($rf['risk_score'] -eq 59) "got=$($rf['risk_score'])"
+
 # --- Cleanup ---
 Remove-Item Function:\Collect-Zeta, Function:\Collect-Alpha -ErrorAction SilentlyContinue
 foreach ($d in $out,$outE,$outM,$out2,$out3) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }

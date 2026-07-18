@@ -1,0 +1,37 @@
+[
+  {
+    "schema_version": "1.0",
+    "artifact_type": "autorun_run_key",
+    "collector": "Collect-Fixture",
+    "collected_at_utc": "2026-07-18T00:00:00Z",
+    "host": { "hostname": "FIXTURE-WIN", "os": "windows", "host_id": "fixture-win-1" },
+    "engagement_id": "CGD-FIXTURE",
+    "source": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
+    "attack": ["T1547.001"],
+    "data": {
+      "location": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
+      "name": "Vendor",
+      "command": "C:\\Program Files\\Vendor\\app.exe",
+      "created": "2026-07-15T00:00:00Z"
+    }
+  },
+  {
+    "schema_version": "1.0",
+    "artifact_type": "process",
+    "collector": "Collect-Fixture",
+    "collected_at_utc": "2026-07-18T00:00:00Z",
+    "host": { "hostname": "FIXTURE-WIN", "os": "windows", "host_id": "fixture-win-1" },
+    "engagement_id": "CGD-FIXTURE",
+    "source": "Win32_Process",
+    "attack": [],
+    "data": {
+      "pid": 1000,
+      "ppid": 800,
+      "name": "explorer.exe",
+      "image_path": "C:\\Windows\\explorer.exe",
+      "command_line": "C:\\Windows\\explorer.exe",
+      "owner": "FIXTURE-WIN\\user",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
+]
