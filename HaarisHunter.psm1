@@ -15,6 +15,15 @@ $script:HHModuleRoot = $PSScriptRoot
 Get-ChildItem -LiteralPath (Join-Path $script:HHModuleRoot 'src/Core') -Recurse -Filter '*.ps1' -ErrorAction SilentlyContinue |
     Sort-Object FullName | ForEach-Object { . $_.FullName }
 
+# 1.5 Detection engine (Phase 2): normalization + Sigma + scoring. Consumes sealed bundles and
+#     depends only on Core primitives, so it loads right after Core. Load-order-independent
+#     (resolution is at call time); guarded so partial builds still import.
+$detectionPath = Join-Path $script:HHModuleRoot 'src/Detection'
+if (Test-Path -LiteralPath $detectionPath) {
+    Get-ChildItem -LiteralPath $detectionPath -Recurse -Filter '*.ps1' -ErrorAction SilentlyContinue |
+        Sort-Object FullName | ForEach-Object { . $_.FullName }
+}
+
 # 2. Load ONLY the current OS's collectors. Windows and Linux both define Collect-Process,
 #    Collect-Network, etc.; loading both would collide. Platform is known now that Core loaded.
 $collectorSub = switch (Get-HHPlatform) {
