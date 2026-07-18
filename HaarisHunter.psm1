@@ -42,8 +42,9 @@ if (Test-Path -LiteralPath $collectorPath) {
 Get-ChildItem -LiteralPath (Join-Path $script:HHModuleRoot 'src/Reporting') -Recurse -Filter '*.ps1' -ErrorAction SilentlyContinue |
     Sort-Object FullName | ForEach-Object { . $_.FullName }
 
-# Orchestrator / public entry point.
+# Orchestrator / public entry points (collection + detection).
 . (Join-Path $script:HHModuleRoot 'Invoke-HaarisHunter.ps1')
+. (Join-Path $script:HHModuleRoot 'Invoke-HaarisDetect.ps1')
 
 # Public surface. Collector functions (Collect-*) are discovered dynamically by the
 # orchestrator and are intentionally not part of the exported API.
@@ -62,7 +63,16 @@ $publicFunctions = @(
     'Test-ChainOfCustody',
     'Protect-EvidenceBundle',
     'Unprotect-EvidenceBundle',
-    'Write-HtmlReport'
+    'Write-HtmlReport',
+    # Phase 2 detection engine
+    'Invoke-HaarisDetect',
+    'ConvertTo-HHNormalizedEvents',
+    'New-Finding',
+    'Test-Finding',
+    'Invoke-SigmaRules',
+    'Import-HHCompiledRules',
+    'Get-HHRiskScore',
+    'Get-HHHostScore'
 )
 
 Export-ModuleMember -Function $publicFunctions

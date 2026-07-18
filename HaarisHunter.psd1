@@ -22,7 +22,15 @@
         'Test-ChainOfCustody',
         'Protect-EvidenceBundle',
         'Unprotect-EvidenceBundle',
-        'Write-HtmlReport'
+        'Write-HtmlReport',
+        'Invoke-HaarisDetect',
+        'ConvertTo-HHNormalizedEvents',
+        'New-Finding',
+        'Test-Finding',
+        'Invoke-SigmaRules',
+        'Import-HHCompiledRules',
+        'Get-HHRiskScore',
+        'Get-HHHostScore'
     )
     CmdletsToExport      = @()
     VariablesToExport    = @()
