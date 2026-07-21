@@ -35,7 +35,7 @@
         "System", "Process", "Network", "SystemdUnits", "Cron",
         "InitScripts", "Accounts", "Sudoers", "SshKeys", "AuthLogs",
         "SystemLogs", "ShellHistory", "KernelModules", "SuidSgid",
-        "PackageIntegrity", "Filesystem", "MemoryHints", "Containers"
+        "PackageIntegrity", "Filesystem", "MemoryHints", "Containers", "ClamAV"
       ]
     }
   },
