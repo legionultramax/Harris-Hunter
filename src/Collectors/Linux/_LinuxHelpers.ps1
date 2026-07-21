@@ -84,6 +84,87 @@ function Get-HHProcStatusField {
     return $null
 }
 
+function Get-HHLocalScanRoots {
+    <#
+    .SYNOPSIS
+        Mount points backed by a real local persistent filesystem (from /proc/self/mounts), plus the
+        high-risk volatile dirs (/tmp, /var/tmp, /dev/shm). Excludes network (nfs/cifs), drvfs/9p
+        (e.g. WSL's Windows drives), overlay, and pseudo-filesystems - the mounts that make an
+        unbounded walk slow or meaningless. De-duped.
+    #>
+    $localFs = @('ext2','ext3','ext4','xfs','btrfs','f2fs','jfs','reiserfs','reiser4','zfs')
+    $roots = [System.Collections.Generic.List[string]]::new()
+    try {
+        foreach ($line in (Get-Content -LiteralPath '/proc/self/mounts' -ErrorAction Stop)) {
+            $f = $line -split '\s+'
+            if ($f.Count -ge 3 -and ($localFs -contains $f[2])) {
+                $mp = $f[1] -replace '\\040', ' '   # /proc/mounts octal-escapes spaces
+                if ($mp -and ($roots -notcontains $mp)) { $roots.Add($mp) }
+            }
+        }
+    } catch { }
+    foreach ($d in @('/tmp','/var/tmp','/dev/shm')) {
+        if ((Test-Path -LiteralPath $d) -and ($roots -notcontains $d)) { $roots.Add($d) }
+    }
+    if ($roots.Count -eq 0) { $roots.Add('/') }
+    return $roots.ToArray()
+}
+
+function Invoke-HHBoundedFind {
+    <#
+    .SYNOPSIS
+        Run `find` over ONE filesystem, bounded to that filesystem by -xdev and (where available)
+        under a hard `timeout` so a slow/huge/remote mount degrades gracefully instead of hanging.
+        Never throws. Returns { Files = <string[]>; Truncated = <bool> } - Truncated is $true when the
+        timeout killed the walk (exit 124). Every recursive filesystem walk in the Linux collectors
+        goes through this, so the "unbounded walk that hangs the run" class of bug cannot recur.
+    .PARAMETER Predicate
+        find expression AFTER "find <root> -xdev" (e.g. '-type','f','-perm','-4000').
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [string[]]$Predicate = @(),
+        [int]$TimeoutSec = 120
+    )
+    $out = $null; $truncated = $false
+    try {
+        if (Test-HHCommand 'timeout') {
+            $out = & timeout $TimeoutSec find $Root -xdev @Predicate 2>$null
+            if ($LASTEXITCODE -eq 124) { $truncated = $true }
+        } else {
+            $out = & find $Root -xdev @Predicate 2>$null
+        }
+    } catch { }
+    return [pscustomobject]@{ Files = @($out | Where-Object { $_ }); Truncated = $truncated }
+}
+
+function Invoke-HHBoundedTool {
+    <#
+    .SYNOPSIS
+        Run an external command under a hard `timeout` (where available) so a slow tool degrades
+        gracefully instead of hanging the run. Never throws. Returns { Lines = <string[]>;
+        Truncated = <bool> } (Truncated = timeout killed it, exit 124). Used for the slow
+        package-verification tools (rpm -Va / debsums / dpkg --verify) that re-hash every packaged
+        file and can run for minutes.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Command,
+        [string[]]$Arguments = @(),
+        [int]$TimeoutSec = 300,
+        [int]$Max = 1000
+    )
+    $out = $null; $truncated = $false
+    try {
+        if (Test-HHCommand 'timeout') {
+            $out = & timeout $TimeoutSec $Command @Arguments 2>$null
+            if ($LASTEXITCODE -eq 124) { $truncated = $true }
+        } else {
+            $out = & $Command @Arguments 2>$null
+        }
+    } catch { }
+    return [pscustomobject]@{ Lines = @($out | Where-Object { $_ } | Select-Object -First $Max); Truncated = $truncated }
+}
+
 function ConvertFrom-HHUid {
     <#
     .SYNOPSIS

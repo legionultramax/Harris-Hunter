@@ -42,6 +42,29 @@ function Test-HHCidrMatch {
     } catch { return $false }
 }
 
+function ConvertTo-HHUtcDateTime {
+    # Coerce a value to a UTC [datetime], or $null if it is not a date. Accepts a native
+    # [datetime]/[datetimeoffset] (PowerShell 7's ConvertFrom-Json yields these from ISO strings)
+    # AND an ISO-8601 string (5.1 keeps strings). Parsing is culture-INVARIANT with RoundtripKind so
+    # a non-US host locale (e.g. dd/MM) never misreads MM/dd, and offsets are normalized to UTC.
+    param($Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [datetime])       { return ([datetime]$Value).ToUniversalTime() }
+    if ($Value -is [datetimeoffset]) { return ([datetimeoffset]$Value).UtcDateTime }
+    $s = [string]$Value
+    # A bare number ("10", "9500.2") is a numeric threshold, not a date - invariant parsing would
+    # otherwise read "9500.2" as the year 9500. Let those fall through to the numeric comparison.
+    $ic = [System.Globalization.CultureInfo]::InvariantCulture
+    $dummy = 0.0
+    if ([double]::TryParse($s, [System.Globalization.NumberStyles]::Any, $ic, [ref]$dummy)) { return $null }
+    $d = [datetime]::MinValue
+    $styles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal
+    if ([datetime]::TryParse($s, $ic, $styles, [ref]$d)) {
+        return $d
+    }
+    return $null
+}
+
 function Compare-HHRuleValue {
     # 3-way compare for gte/lte. Resolves scan-window tokens, then tries datetime, then numeric,
     # then ordinal string. Returns <0, 0, >0 or $null when incomparable.
@@ -51,14 +74,20 @@ function Compare-HHRuleValue {
     elseif ($RuleValue -eq 'scan_window_end') { $rv = $Ctx.ScanWindowEnd }
     if ($null -eq $FieldValue -or $null -eq $rv) { return $null }
 
-    $df = [datetime]::MinValue; $dv = [datetime]::MinValue
-    if ([datetime]::TryParse([string]$FieldValue, [ref]$df) -and [datetime]::TryParse([string]$rv, [ref]$dv)) {
-        return $df.CompareTo($dv)
-    }
+    # Date comparison first (the common case for gte/lte: recency/timeframe filters). Both operands
+    # are coerced to UTC datetimes so the compare is correct regardless of PS version or host locale.
+    $df = ConvertTo-HHUtcDateTime $FieldValue
+    $dv = ConvertTo-HHUtcDateTime $rv
+    if ($null -ne $df -and $null -ne $dv) { return $df.CompareTo($dv) }
+
     $nf = 0.0; $nv = 0.0
-    if ([double]::TryParse([string]$FieldValue, [ref]$nf) -and [double]::TryParse([string]$rv, [ref]$nv)) {
+    $ic = [System.Globalization.CultureInfo]::InvariantCulture
+    $ns = [System.Globalization.NumberStyles]::Any
+    if ([double]::TryParse([string]$FieldValue, $ns, $ic, [ref]$nf) -and [double]::TryParse([string]$rv, $ns, $ic, [ref]$nv)) {
         return $nf.CompareTo($nv)
     }
+    # Only reached when neither operand is a date or number. Ordinal string compare is a last resort,
+    # NOT a silent fallback for a date that failed to parse (that path is handled above).
     return [string]::Compare([string]$FieldValue, [string]$rv, $true)
 }
 

@@ -16,10 +16,10 @@ Runs on **Windows PowerShell 5.1 and PowerShell 7+** (no install on stock Window
 | Area | State |
 |---|---|
 | **Core Framework** | Complete — schema, config, authorization gate, logging + SHA-256, hash-chained chain-of-custody + time integrity, statistics, evidence writer (+ AES), evidence-file sink |
-| **Windows collectors** | 16 collectors — verified on a live host (deep run re-verifies); autostart coverage broadened (AppInit/AppCert/Active Setup/Startup folders/print monitors/screensaver) |
-| **Linux collectors** | 18 collectors — built + parse-clean; **field-test pending** (dev host had no Linux runtime) |
-| **Detection engine (Phase 2)** | **Sigma engine delivered** — normalize → Sigma → risk score → `finding.v1` + ATT&CK-heatmap report, read-only over a sealed bundle. IOC / native-DSL / behavioral / ClamAV deferred to later increments |
-| **Framework verifier** | `tools/Verify-Framework.ps1` — **45/45 checks, exit 0** on PS 5.1 (OS-neutral); `tools/Test-DetectionRules.ps1` — rule-lint + fixtures, **10/10** |
+| **Windows collectors** | 16 collectors — verified on a live host (deep run re-verifies); autostart coverage broadened (AppInit/AppCert/Active Setup/Startup folders/print monitors/screensaver); **bounded flagged-file capture** (unsigned/out-of-tree images retained for YARA/ClamAV, `full` mode) |
+| **Linux collectors** | 19 collectors — **field-verified on WSL2 Ubuntu**: full `deep` run completes clean (19/19, 0 failed/skipped, bundle re-verifies), ClamAV detects EICAR end-to-end. Every filesystem/tool walk is mount-bounded (`-xdev`, local-fs only) and `timeout`-guarded |
+| **Detection engine (Phase 2)** | **Sigma engine delivered** — normalize → Sigma → risk score → `finding.v1` + ATT&CK-heatmap report, read-only over a sealed bundle; **correctness-hardened for PowerShell 7 + non-US locale** (custody re-verify + date-windowed rules). ClamAV **collector** added (Linux §9 — produces evidence); ClamAV/YARA **findings wiring**, IOC engine, native-DSL, behavioral deferred to later increments |
+| **Framework verifier** | `tools/Verify-Framework.ps1` — **63/63 checks, exit 0**, verified non-flaky across **Windows PowerShell 5.1 (en-US) and PowerShell 7.6 (en-AE)**, incl. PS7/locale regression guards + flagged-file capture; `tools/Test-DetectionRules.ps1` — rule-lint + fixtures + committed-rule sync, **11/11** |
 
 ## Design principles
 
@@ -186,6 +186,12 @@ where it is cheap.
 > per-process WMI `GetOwner` (~0.5s each), so a full run is typically under a minute. Raw `.evtx`
 > export (`deep`) adds bundle size proportional to log volume.
 
+> **Flagged-file capture (§10.2):** high-risk images resolved by Process/Services/Autoruns/
+> ScheduledTasks/WmiPersistence — unsigned, or outside the Windows/Program Files trees — are
+> retained into the bundle (hashed, custody-logged) under hard per-file/count/byte-budget caps and
+> an executable/script eligibility gate, `full` mode only, so downstream YARA/ClamAV tiers have
+> on-host bytes to scan. Linux collector wiring is deferred to a later increment.
+
 ## Linux collectors
 
 Loaded only on Linux; run under `pwsh` 7, ideally as root for full coverage. Core Framework,
@@ -211,11 +217,14 @@ schema, chain-of-custody, evidence-file sink, and reporting are shared with Wind
 | Filesystem | tmp/var-tmp/dev-shm + world-writable files | T1204, T1222 |
 | MemoryHints | /proc/meminfo, swaps, kcore (pointers, not capture) | — |
 | Containers | docker/podman ps | T1610, T1611 |
+| ClamAV | anti-malware scan (§9): signature-staleness gate, targeted high-risk-path scan, resource-guarded, **non-destructive**; emits detections + scan summary, folds scan log into bundle | — |
 
-> **Field-test status:** the Linux collectors are built and parse-clean but were authored on a
-> Windows host with no Linux runtime, so they are **not yet functionally verified**. Validate on a
-> Linux host: `sudo pwsh -File tools/Invoke-Example.ps1 -Profile standard` (runs collection and
-> re-verifies the bundle).
+> **Field-test status:** field-verified on **WSL2 Ubuntu 26.04** — a full `deep` run completes
+> **19/19 collectors, 0 failed/skipped**, and the sealed bundle re-verifies (`Valid=True`). Every
+> filesystem/tool walk (`SuidSgid` capabilities, `Filesystem`, `PackageIntegrity`) is mount-bounded
+> (`-xdev`, local filesystems only — never network/9p/overlay) and `timeout`-guarded, so a large or
+> slow mount degrades gracefully instead of hanging. Re-run on any Linux host with:
+> `sudo pwsh -File tools/Invoke-Example.ps1 -Profile deep`.
 
 ## Requirements
 
@@ -229,8 +238,8 @@ schema, chain-of-custody, evidence-file sink, and reporting are shared with Wind
 
 ```powershell
 # Dependency-free, OS-neutral, runs on PS 5.1 and 7+, exits non-zero on failure:
-pwsh -File ./tools/Verify-Framework.ps1        # framework + detection (45 checks)
-pwsh -File ./tools/Test-DetectionRules.ps1     # Sigma rule-lint + fixtures (10 checks)
+pwsh -File ./tools/Verify-Framework.ps1        # framework + detection (63 checks)
+pwsh -File ./tools/Test-DetectionRules.ps1     # Sigma rule-lint + fixtures + rule sync (11 checks)
 
 # Example / field-test run (creates a permissive engagement, collects, re-verifies):
 pwsh -File ./tools/Invoke-Example.ps1 -Profile standard
@@ -239,13 +248,17 @@ pwsh -File ./tools/Invoke-Example.ps1 -Profile standard
 Invoke-Pester -Path ./tests/HaarisHunter.Tests.ps1 -Path ./tests/Detection.Tests.ps1
 ```
 
-`Verify-Framework.ps1` proves (**45 checks**): module import + public surface, hashing, schema
+`Verify-Framework.ps1` proves (**63 checks**): module import + public surface, hashing, schema
 (incl. empty-attack normalization), all authorization paths, end-to-end seal, bundle
 re-verification (artifacts + evidence files), same-name evidence de-collision, artifact +
-evidence-file + **manifest-anchor** + custody-ledger tamper detection, the AES round-trip, and the
+evidence-file + **manifest-anchor** + custody-ledger tamper detection, the AES round-trip, the
 **detection engine** (normalize → Sigma fires on a user-writable autostart, recency filter excludes
-pre-window entries, finding validates against `finding.v1`, risk math matches §28.6).
-`Test-DetectionRules.ps1` compiles + lints every Sigma rule and runs the known-good/known-bad fixtures.
+pre-window entries, finding validates against `finding.v1`, risk math matches §28.6), the
+**bounded flagged-file capture** (eligibility, caps, dedup, mode gate, manifest folding, re-verify),
+and **PS7/locale regression guards** (custody hash + date-windowed rules stay correct under a
+non-US culture and PowerShell 7's JSON date coercion). `Test-DetectionRules.ps1` compiles + lints
+every Sigma rule, checks the committed compiled rules are in sync with source, and runs the
+known-good/known-bad fixtures. Both gates are verified **non-flaky across PS 5.1 and PS 7.6**.
 
 ## Layout
 
@@ -274,9 +287,9 @@ Collectors **only gather** (return normalized records; the orchestrator owns has
 custody). The evidence bundle is the stable contract between phases:
 
 - **Phase 1** — Core Framework + Windows collectors. ✅ Done.
-- **Phase 1.5** — Linux collectors on the same framework. ✅ Built (field-test pending on a Linux host).
+- **Phase 1.5** — Linux collectors on the same framework. ✅ Done — **field-verified on WSL2** (full `deep` run 19/19, bundle re-verifies); filesystem/tool walks mount-bounded + `timeout`-guarded.
 - **Phase 1.9** — collector conformance hardening (autostart breadth, Linux system-log capture, process lineage, capabilities). ✅ Done.
-- **Phase 2** — Detection engine consuming the JSON bundle. ✅ **Sigma path delivered** (normalize → Sigma → ATT&CK map → risk score → `finding.v1` + report). ⏳ Next increments: IOC engine, native cross-artifact DSL, behavioral analytics, ClamAV/YARA adapter — all behind the same pluggable dispatch + `finding.v1` contract.
+- **Phase 2** — Detection engine consuming the JSON bundle. ✅ **Sigma path delivered** (normalize → Sigma → ATT&CK map → risk score → `finding.v1` + report), correctness-hardened for PowerShell 7 + non-US locale and regression-guarded. ✅ **ClamAV collector** (Linux §9) + **bounded flagged-file capture** (§10.2) landed — the on-host groundwork for file-content scanning. ⏳ Next increments: ClamAV/YARA **findings wiring**, IOC engine, native cross-artifact DSL, behavioral analytics — all behind the same pluggable dispatch + `finding.v1` contract.
 - **Phase 3+** — Correlation/dedup → Risk engine → Central platform (ingestion API, PostgreSQL findings DB, WORM store, RBAC, multi-tenant).
 
 ## Notes

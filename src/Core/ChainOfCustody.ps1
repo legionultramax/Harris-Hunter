@@ -8,6 +8,41 @@ $script:HHCocSeq      = 0
 $script:HHCocGenesis  = ('0' * 64)
 $script:HHCocPrevHash = $script:HHCocGenesis
 
+function ConvertTo-HHCocCanonical {
+    # Produce the canonical JSON string that the entry hash is computed over, IDENTICALLY on the
+    # write and the verify side. PowerShell 7's ConvertFrom-Json auto-converts ISO-8601 strings to
+    # [datetime] (5.1 leaves them as [string]), and re-serializing a [datetime] drops trailing
+    # fractional-second zeros (.9235900Z -> .92359Z) - which silently broke the hash on PS7. We
+    # normalize every [datetime]/[datetimeoffset] back to its round-trip 'o' string (which pads to a
+    # fixed 7 fractional digits and matches the write-side ToString('o')), so the canonical form is
+    # independent of PowerShell version and locale. Recursive so nested details are covered too.
+    param($Value)
+    if ($Value -is [datetime])        { return ([datetime]$Value).ToString('o') }
+    if ($Value -is [datetimeoffset])  { return ([datetimeoffset]$Value).ToString('o') }
+    if ($Value -is [string])          { return $Value }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $o = [ordered]@{}
+        foreach ($k in $Value.Keys) { $o[[string]$k] = ConvertTo-HHCocCanonical $Value[$k] }
+        return $o
+    }
+    if ($Value -is [System.Management.Automation.PSCustomObject]) {
+        $o = [ordered]@{}
+        foreach ($p in $Value.PSObject.Properties) { $o[$p.Name] = ConvertTo-HHCocCanonical $p.Value }
+        return $o
+    }
+    if ($Value -is [System.Collections.IEnumerable] -and -not ($Value -is [string])) {
+        return @(foreach ($item in $Value) { ConvertTo-HHCocCanonical $item })
+    }
+    return $Value
+}
+
+function Get-HHCocEntryHash {
+    # Deterministic entry hash: prev_hash + canonical-JSON of the 5 hashed fields.
+    param([string]$PrevHash, $Entry)
+    $canonical = (ConvertTo-HHCocCanonical $Entry) | ConvertTo-Json -Depth 12 -Compress
+    return Get-HHStringHash -InputString ($PrevHash + $canonical)
+}
+
 function Initialize-ChainOfCustody {
     [CmdletBinding()]
     param(
@@ -44,8 +79,7 @@ function Add-CocEvent {
         prev_hash = $script:HHCocPrevHash
     }
 
-    $canonical = $entry | ConvertTo-Json -Depth 12 -Compress
-    $entryHash = Get-HHStringHash -InputString ($script:HHCocPrevHash + $canonical)
+    $entryHash = Get-HHCocEntryHash -PrevHash $script:HHCocPrevHash -Entry $entry
     $entry['entry_hash'] = $entryHash
     $script:HHCocPrevHash = $entryHash
 
@@ -79,8 +113,7 @@ function Test-ChainOfCustody {
             details   = $obj.details
             prev_hash = $obj.prev_hash
         }
-        $canonical = $recon | ConvertTo-Json -Depth 12 -Compress
-        $expected  = Get-HHStringHash -InputString ($obj.prev_hash + $canonical)
+        $expected = Get-HHCocEntryHash -PrevHash ([string]$obj.prev_hash) -Entry $recon
         if ($expected -ne $obj.entry_hash) { $problems.Add("entry_hash mismatch at seq $($obj.seq) (content altered)") }
 
         $prev = $obj.entry_hash

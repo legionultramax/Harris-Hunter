@@ -175,15 +175,33 @@ $enc  = Protect-EvidenceBundle -BundlePath $out3 -Passphrase $securePass
 Assert-That "encrypted bundle created" (Test-Path $enc)
 $zip  = Unprotect-EvidenceBundle -Path $enc -Passphrase $securePass -OutZip (Join-Path ([IO.Path]::GetTempPath()) 'hh_ok.zip')
 Assert-That "decrypt with correct passphrase" (Test-Path $zip)
-$wrongOk = $true
-try { Unprotect-EvidenceBundle -Path $enc -Passphrase (ConvertTo-SecureString 'wrong' -AsPlainText -Force) -OutZip (Join-Path ([IO.Path]::GetTempPath()) 'hh_bad.zip') | Out-Null }
-catch { $wrongOk = $false }
-Assert-That "wrong passphrase rejected" (-not $wrongOk)
+# A wrong passphrase must not recover the bundle. AES-CBC+PKCS7 throws on a bad key ~255/256 of
+# the time, but ~1/256 the trailing padding is coincidentally valid and decryption returns garbage
+# WITHOUT throwing - so asserting only "it threw" is ~0.4% flaky. Deterministic check: rejected if
+# it throws OR the produced file is not a readable zip with entries (garbage never forms one).
+if (-not ('System.IO.Compression.ZipFile' -as [type])) { Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue }
+$badZip = Join-Path ([IO.Path]::GetTempPath()) 'hh_bad.zip'
+Remove-Item -LiteralPath $badZip -Force -ErrorAction SilentlyContinue
+$wrongRejected = $false
+try {
+    Unprotect-EvidenceBundle -Path $enc -Passphrase (ConvertTo-SecureString 'wrong' -AsPlainText -Force) -OutZip $badZip | Out-Null
+    if (-not (Test-Path -LiteralPath $badZip)) { $wrongRejected = $true }
+    else {
+        try { $za = [System.IO.Compression.ZipFile]::OpenRead($badZip); $n = @($za.Entries).Count; $za.Dispose(); $wrongRejected = ($n -eq 0) }
+        catch { $wrongRejected = $true }   # not a valid archive -> bundle not recoverable
+    }
+} catch { $wrongRejected = $true }         # decryption threw -> rejected
+Remove-Item -LiteralPath $badZip -Force -ErrorAction SilentlyContinue
+Assert-That "wrong passphrase cannot recover the bundle" $wrongRejected
 
 # --- Detection engine (Phase 2: normalize -> Sigma -> finding -> risk) ---
 Write-Host "`n[8] Detection engine" -ForegroundColor Cyan
-& (Join-Path $ModuleRoot 'tools/Convert-SigmaPack.ps1') -Quiet | Out-Null
-$detRules = Import-HHCompiledRules -Path (Join-Path $ModuleRoot 'config/detection/rules/compiled')
+# Compile to a TEMP dir, not the committed compiled/ tree: recompiling in place stamped a new
+# compiled_at (and version-specific JSON formatting) into the committed artifacts on every run,
+# dirtying git. This still exercises the full compile -> load path.
+$detCompiled = New-TempDir
+& (Join-Path $ModuleRoot 'tools/Convert-SigmaPack.ps1') -OutDir $detCompiled -Quiet | Out-Null
+$detRules = Import-HHCompiledRules -Path $detCompiled
 Assert-That "compiled Sigma rules load" ($detRules.Count -ge 1) "loaded=$($detRules.Count)"
 
 # A benign, ordinary user-writable autostart created in-window must fire the registry_run rule.
@@ -285,12 +303,78 @@ Invoke-HaarisHunter -EngagementFile $engMin -Profile quick -Include 'CaptureMin'
     -Exclude $script:RealCollectors -OutputPath $outCm -LogLevel Error | Out-Null
 Assert-That "minimized mode does not capture flagged files" ($global:HHCapMin.captured -eq $false -and $global:HHCapMin.reason -eq 'mode_not_full') "reason=$($global:HHCapMin.reason)"
 
+# --- PS7 / non-US-locale regression guards ---
+# These lock in the fixes for the class of bug that CI on PS 5.1 / en-US could not see:
+# PowerShell 7's ConvertFrom-Json turns ISO strings into [datetime], and date handling was
+# culture-sensitive. We force a dd/MM culture (en-AE) AND feed a real [datetime] so the failing
+# condition reproduces on ANY runtime - not only on PS7 - and would fail if the fix regresses.
+Write-Host "`n[10] PS7 / locale regression guards" -ForegroundColor Cyan
+$mod = Get-Module HaarisHunter
+$origCulture = [System.Threading.Thread]::CurrentThread.CurrentCulture
+try {
+    [System.Threading.Thread]::CurrentThread.CurrentCulture = [System.Globalization.CultureInfo]::GetCultureInfo('en-AE')
+
+    # (a) Custody: a [datetime] ts_utc and its 'o' string form must hash identically. This is the
+    #     invariant the custody canonical form relies on (PS7 read yields [datetime], write had string).
+    $canon = & $mod {
+        $prev = ('0' * 64)
+        $s  = '2026-07-21T07:40:33.9200000Z'                                   # trailing-zero fraction
+        $dt = [datetime]::Parse($s, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind)
+        $eS = [ordered]@{ seq=1; ts_utc=$s;  event='collector_complete'; details=[ordered]@{ records=1; duration_ms=1.0 }; prev_hash=$prev }
+        $eD = [ordered]@{ seq=1; ts_utc=$dt; event='collector_complete'; details=[ordered]@{ records=1; duration_ms=1.0 }; prev_hash=$prev }
+        [pscustomobject]@{ s=(Get-HHCocEntryHash -PrevHash $prev -Entry $eS); d=(Get-HHCocEntryHash -PrevHash $prev -Entry $eD) }
+    }
+    Assert-That "custody: [datetime] and ISO-string ts_utc hash identically" ($canon.s -eq $canon.d)
+
+    # (b) Custody: full write -> JSON line -> ConvertFrom-Json -> re-verify round-trip is stable.
+    #     On PS7 the parsed ts_utc becomes a [datetime]; the recomputed hash must still match.
+    $rt = & $mod {
+        $prev = ('0' * 64)
+        $e = [ordered]@{ seq=1; ts_utc='2026-07-21T07:40:33.9200000Z'; event='collector_complete'; details=[ordered]@{ records=349; duration_ms=9500.0 }; prev_hash=$prev }
+        $e['entry_hash'] = Get-HHCocEntryHash -PrevHash $prev -Entry $e
+        $obj = ($e | ConvertTo-Json -Depth 12 -Compress) | ConvertFrom-Json
+        $recon = [ordered]@{ seq=$obj.seq; ts_utc=$obj.ts_utc; event=$obj.event; details=$obj.details; prev_hash=$obj.prev_hash }
+        [pscustomobject]@{ stored=$e['entry_hash']; recomputed=(Get-HHCocEntryHash -PrevHash ([string]$obj.prev_hash) -Entry $recon) }
+    }
+    Assert-That "custody: trailing-zero timestamp survives JSON round-trip re-verify" ($rt.stored -eq $rt.recomputed) "stored=$($rt.stored.Substring(0,12)) recomputed=$($rt.recomputed.Substring(0,12))"
+
+    # (c) Sigma: a date-windowed rule must fire when persistence.created is a [datetime] (as PS7's
+    #     ConvertFrom-Json yields) under a dd/MM locale - the exact false-negative that was fixed.
+    $regRules = Import-HHCompiledRules -Path (Join-Path $ModuleRoot 'config/detection/rules/compiled')
+    $regRec = [ordered]@{
+        schema_version='1.0'; artifact_type='autorun_run_key'; collector='Collect-Reg'
+        collected_at_utc='2026-07-16T00:00:00Z'
+        host=[ordered]@{ hostname='REG-WIN'; os='windows'; host_id='reg-1' }; engagement_id='CGD-REG'
+        source='HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'; attack=@('T1547.001')
+        data=[ordered]@{ location='HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'; name='Updater'
+                         command='C:\Users\Public\updater.exe'
+                         created=[datetime]::new(2026,7,15,0,0,0,[System.DateTimeKind]::Utc) }
+    }
+    $regEvents = @(ConvertTo-HHNormalizedEvents -Records @($regRec))
+    $regFindings = @(Invoke-SigmaRules -Events $regEvents -Rules $regRules `
+        -ScanWindowStart ([datetime]'2026-07-01T00:00:00Z') -ScanWindowEnd ([datetime]'2026-07-18T00:00:00Z') -FindingArgs @{})
+    Assert-That "sigma: [datetime] recency field fires date-windowed rule under dd/MM locale" ($regFindings.Count -eq 1) "findings=$($regFindings.Count)"
+
+    # (d) Sigma: a numeric gte threshold must still compare numerically, not be misread as a date.
+    $num = & $mod {
+        $ctx = @{ ScanWindowStart=''; ScanWindowEnd='' }
+        [pscustomobject]@{
+            hi = (Test-HHScalarMatch -FieldValue '12' -RuleValue '10' -Op 'gte' -Ctx $ctx)
+            lo = (Test-HHScalarMatch -FieldValue '8'  -RuleValue '10' -Op 'gte' -Ctx $ctx)
+        }
+    }
+    Assert-That "sigma: numeric gte threshold stays numeric (12>=10 true, 8>=10 false)" ($num.hi -and -not $num.lo)
+}
+finally {
+    [System.Threading.Thread]::CurrentThread.CurrentCulture = $origCulture
+}
+
 # --- Cleanup ---
 Remove-Item Function:\Collect-Zeta, Function:\Collect-Alpha, Function:\Collect-Capture, Function:\Collect-CaptureMin -ErrorAction SilentlyContinue
 Remove-Item Variable:\HHCapResults, Variable:\HHCapMin -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $engMin -Force -ErrorAction SilentlyContinue
 foreach ($d in $outC,$outCm) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
-foreach ($d in $out,$outE,$outM,$out2,$out3) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+foreach ($d in $out,$outE,$outM,$out2,$out3,$detCompiled) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
 Remove-Item -LiteralPath $enc -Force -ErrorAction SilentlyContinue
 
 Write-Host ("`n==== {0} passed, {1} failed ====" -f $script:Pass, $script:Fail) -ForegroundColor $(if ($script:Fail){'Red'}else{'Green'})
