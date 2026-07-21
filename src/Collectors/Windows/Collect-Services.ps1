@@ -11,6 +11,7 @@ function Collect-Services {
     foreach ($s in $svcs) {
         $image = Resolve-HHImagePath -CommandLine $s.PathName
         $ev = Get-HHFileEvidence -Path $image
+        if (Test-HHSuspectImage -Ev $ev) { [void](Add-FlaggedFile -Path $ev.path -KnownSha256 $ev.sha256) }
 
         $attack = @('T1543.003')
         # Service binary outside system dirs or unsigned is worth flagging cheaply.

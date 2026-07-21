@@ -76,7 +76,8 @@ Write-Host "`n[1] Module import" -ForegroundColor Cyan
 Import-Module (Join-Path $ModuleRoot 'HaarisHunter.psd1') -Force
 $expected = 'Invoke-HaarisHunter','Assert-Authorization','New-EvidenceRecord','Test-EvidenceRecord',
             'Seal-EvidenceBundle','Test-EvidenceBundle','Test-ChainOfCustody','Protect-EvidenceBundle',
-            'Unprotect-EvidenceBundle','Get-HHStringHash','Write-HtmlReport'
+            'Unprotect-EvidenceBundle','Get-HHStringHash','Write-HtmlReport',
+            'Add-FlaggedFile','Set-HHCapturePolicy','Test-HHCaptureEligible'
 foreach ($fn in $expected) { Assert-That "exports $fn" ([bool](Get-Command $fn -ErrorAction SilentlyContinue)) }
 
 # --- Hash engine ---
@@ -215,8 +216,80 @@ $rf = [ordered]@{ severity='high'; confidence='medium'; observed_at='2026-07-15T
 Get-HHRiskScore -Finding $rf | Out-Null
 Assert-That "finding risk math (70*0.7 + 10 crown_jewel = 59)" ($rf['risk_score'] -eq 59) "got=$($rf['risk_score'])"
 
+# --- Flagged-file capture (section 10.2: bounded high-risk set) ---
+Write-Host "`n[9] Flagged-file capture (bounded)" -ForegroundColor Cyan
+
+# Eligibility gate is pure (no sink/state): PE magic + script extension pass; plain text fails.
+$tmpMZ  = Join-Path ([IO.Path]::GetTempPath()) ("hhcap_" + [guid]::NewGuid().ToString('N') + '.exe')
+$mzBytes = New-Object byte[] 24; $mzBytes[0] = 0x4D; $mzBytes[1] = 0x5A
+[IO.File]::WriteAllBytes($tmpMZ, $mzBytes)
+$tmpTxt = Join-Path ([IO.Path]::GetTempPath()) ("hhcap_" + [guid]::NewGuid().ToString('N') + '.txt')
+[IO.File]::WriteAllText($tmpTxt, 'this is not an executable')
+$tmpPs1 = Join-Path ([IO.Path]::GetTempPath()) ("hhcap_" + [guid]::NewGuid().ToString('N') + '.ps1')
+[IO.File]::WriteAllText($tmpPs1, 'Write-Output 1')
+Assert-That "eligible: PE (MZ) magic" (Test-HHCaptureEligible -Path $tmpMZ)
+Assert-That "eligible: script extension (.ps1)" (Test-HHCaptureEligible -Path $tmpPs1)
+Assert-That "ineligible: plain .txt" (-not (Test-HHCaptureEligible -Path $tmpTxt))
+foreach ($f in $tmpMZ,$tmpTxt,$tmpPs1) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+
+# Full end-to-end capture with a tiny budget, exercised through a real (full-mode) run so the
+# orchestrator wires the policy + mode. The collector sets a small budget then feeds Add-FlaggedFile.
+function global:Collect-Capture {
+    param($Context)
+    Set-HHCapturePolicy -Policy @{ enabled=$true; max_file_bytes=64; max_total_bytes=100000; max_files=8; script_extensions=@('.ps1') } -CollectionMode 'full'
+    $good = Join-Path ([IO.Path]::GetTempPath()) ("hhc_" + [guid]::NewGuid().ToString('N') + '.exe')
+    $b = New-Object byte[] 32; $b[0] = 0x4D; $b[1] = 0x5A; [IO.File]::WriteAllBytes($good, $b)
+    $txt  = Join-Path ([IO.Path]::GetTempPath()) ("hhc_" + [guid]::NewGuid().ToString('N') + '.txt')
+    [IO.File]::WriteAllText($txt, 'nope')
+    $big  = Join-Path ([IO.Path]::GetTempPath()) ("hhc_" + [guid]::NewGuid().ToString('N') + '.exe')
+    $bb = New-Object byte[] 200; $bb[0] = 0x4D; $bb[1] = 0x5A; [IO.File]::WriteAllBytes($big, $bb)
+    $global:HHCapResults = [ordered]@{
+        good = Add-FlaggedFile -Path $good
+        txt  = Add-FlaggedFile -Path $txt
+        big  = Add-FlaggedFile -Path $big
+        dup  = Add-FlaggedFile -Path $good
+    }
+    foreach ($f in $good,$txt,$big) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+    New-EvidenceRecord -ArtifactType 'capture' -Collector 'Collect-Capture' -Attack @() -Data @{ ok = 1 } -Context $Context
+}
+$outC = New-TempDir
+Invoke-HaarisHunter -EngagementFile $script:eng -Profile quick -Include 'Capture' `
+    -Exclude $script:RealCollectors -OutputPath $outC -LogLevel Error | Out-Null
+$cap = $global:HHCapResults
+Assert-That "eligible PE captured" ($cap.good.captured -eq $true) "reason=$($cap.good.reason)"
+Assert-That "ineligible .txt skipped" ($cap.txt.captured -eq $false -and $cap.txt.reason -eq 'ineligible_type') "reason=$($cap.txt.reason)"
+Assert-That "over-cap file skipped (too_large)" ($cap.big.captured -eq $false -and $cap.big.reason -eq 'too_large') "reason=$($cap.big.reason)"
+Assert-That "same path de-duplicated" ($cap.dup.captured -eq $true -and $cap.dup.deduped -eq $true)
+Assert-That "captured file landed in bundle" (Test-Path (Join-Path $outC ($cap.good.file -replace '/', [IO.Path]::DirectorySeparatorChar)))
+$manC = Get-Content (Join-Path $outC 'manifest.json') -Raw | ConvertFrom-Json
+Assert-That "capture folded into manifest.evidence_files exactly once" (@($manC.evidence_files | Where-Object { $_.category -eq 'flagged' }).Count -eq 1)
+Assert-That "captured bundle re-verifies" ((Test-EvidenceBundle -BundlePath $outC).Valid)
+
+# Minimized mode must NOT capture (raw bytes are content; full-mode only).
+$engMin = Join-Path ([IO.Path]::GetTempPath()) 'hh_verify_eng_min.json'
+@{
+    engagement_id='CGD-ENG-VERIFY'; client='Self Test'; authorization_reference='VERIFY-1'
+    authorized_operators=@('*'); authorized_scope=@{ hostnames=@('*'); ips=@(); asset_tags=@() }
+    valid_from='2026-01-01T00:00:00Z'; valid_to='2026-12-31T23:59:59Z'; collection_mode='minimized'
+} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $engMin -Encoding utf8
+function global:Collect-CaptureMin {
+    param($Context)
+    $good = Join-Path ([IO.Path]::GetTempPath()) ("hhcm_" + [guid]::NewGuid().ToString('N') + '.exe')
+    $b = New-Object byte[] 32; $b[0] = 0x4D; $b[1] = 0x5A; [IO.File]::WriteAllBytes($good, $b)
+    $global:HHCapMin = Add-FlaggedFile -Path $good
+    Remove-Item -LiteralPath $good -Force -ErrorAction SilentlyContinue
+    New-EvidenceRecord -ArtifactType 'capture' -Collector 'Collect-CaptureMin' -Attack @() -Data @{ ok = 1 } -Context $Context
+}
+$outCm = New-TempDir
+Invoke-HaarisHunter -EngagementFile $engMin -Profile quick -Include 'CaptureMin' `
+    -Exclude $script:RealCollectors -OutputPath $outCm -LogLevel Error | Out-Null
+Assert-That "minimized mode does not capture flagged files" ($global:HHCapMin.captured -eq $false -and $global:HHCapMin.reason -eq 'mode_not_full') "reason=$($global:HHCapMin.reason)"
+
 # --- Cleanup ---
-Remove-Item Function:\Collect-Zeta, Function:\Collect-Alpha -ErrorAction SilentlyContinue
+Remove-Item Function:\Collect-Zeta, Function:\Collect-Alpha, Function:\Collect-Capture, Function:\Collect-CaptureMin -ErrorAction SilentlyContinue
+Remove-Item Variable:\HHCapResults, Variable:\HHCapMin -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $engMin -Force -ErrorAction SilentlyContinue
+foreach ($d in $outC,$outCm) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
 foreach ($d in $out,$outE,$outM,$out2,$out3) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
 Remove-Item -LiteralPath $enc -Force -ErrorAction SilentlyContinue
 

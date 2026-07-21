@@ -19,6 +19,7 @@ function Collect-Autoruns {
     foreach ($key in $runKeys) {
         foreach ($kv in (Get-HHRegValues -Path $key).GetEnumerator()) {
             $ev = Get-HHFileEvidence -Path (Resolve-HHImagePath -CommandLine $kv.Value)
+            if (Test-HHSuspectImage -Ev $ev) { [void](Add-FlaggedFile -Path $ev.path -KnownSha256 $ev.sha256) }
             $records.Add((New-EvidenceRecord -ArtifactType 'autorun_run_key' -Collector 'Collect-Autoruns' `
                 -Source $key -Attack @('T1547.001') -Context $Context -Data @{
                     location  = $key
@@ -106,6 +107,7 @@ function Collect-Autoruns {
                 $vals = Get-HHRegValues -Path $_.PSPath
                 if ($vals.ContainsKey('StubPath') -and $vals['StubPath']) {
                     $ev = Get-HHFileEvidence -Path (Resolve-HHImagePath -CommandLine $vals['StubPath'])
+                    if (Test-HHSuspectImage -Ev $ev) { [void](Add-FlaggedFile -Path $ev.path -KnownSha256 $ev.sha256) }
                     $records.Add((New-EvidenceRecord -ArtifactType 'autorun_active_setup' -Collector 'Collect-Autoruns' `
                         -Source $_.PSPath -Attack @('T1547.014') -Context $Context -Data @{
                             location  = $root
@@ -135,6 +137,7 @@ function Collect-Autoruns {
             if (-not (Test-Path -LiteralPath $dir -ErrorAction SilentlyContinue)) { continue }
             Get-ChildItem -LiteralPath $dir -File -ErrorAction Stop | ForEach-Object {
                 $ev = Get-HHFileEvidence -Path $_.FullName
+                if (Test-HHSuspectImage -Ev $ev) { [void](Add-FlaggedFile -Path $ev.path -KnownSha256 $ev.sha256) }
                 $records.Add((New-EvidenceRecord -ArtifactType 'autorun_startup_folder' -Collector 'Collect-Autoruns' `
                     -Source $dir -Attack @('T1547.001') -Context $Context -Data @{
                         location  = $dir
@@ -167,6 +170,7 @@ function Collect-Autoruns {
     $scr = Get-HHRegValues -Path 'HKCU:\Control Panel\Desktop'
     if ($scr.ContainsKey('SCRNSAVE.EXE') -and $scr['SCRNSAVE.EXE']) {
         $ev = Get-HHFileEvidence -Path (Resolve-HHImagePath -CommandLine $scr['SCRNSAVE.EXE'])
+        if (Test-HHSuspectImage -Ev $ev) { [void](Add-FlaggedFile -Path $ev.path -KnownSha256 $ev.sha256) }
         $records.Add((New-EvidenceRecord -ArtifactType 'autorun_screensaver' -Collector 'Collect-Autoruns' `
             -Source 'HKCU\Control Panel\Desktop' -Attack @('T1546.002') -Context $Context -Data @{
                 scrnsave = $scr['SCRNSAVE.EXE']

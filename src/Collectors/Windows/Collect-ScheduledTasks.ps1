@@ -21,6 +21,7 @@ function Collect-ScheduledTasks {
             $workDir = if ($a.PSObject.Properties['WorkingDirectory']) { $a.WorkingDirectory } else { $null }
             $classId = if ($a.PSObject.Properties['ClassId'])          { $a.ClassId }          else { $null }
             $ev = if ($exec) { Get-HHFileEvidence -Path (Resolve-HHImagePath -CommandLine $exec) } else { $null }
+            if (Test-HHSuspectImage -Ev $ev) { [void](Add-FlaggedFile -Path $ev.path -KnownSha256 $ev.sha256) }
             $actionType = if ($a -and $a.PSObject.Properties['CimClass'] -and $a.CimClass) { $a.CimClass.CimClassName } else { $a.GetType().Name }
             $actions += [ordered]@{
                 action_type = $actionType

@@ -26,7 +26,7 @@ function Collect-WmiPersistence {
             }
             # Capture the payload fields that matter for the common consumer types.
             if ($c.PSObject.Properties['CommandLineTemplate']) { $data['command_line'] = $c.CommandLineTemplate }
-            if ($c.PSObject.Properties['ExecutablePath'])      { $data['executable_path'] = $c.ExecutablePath }
+            if ($c.PSObject.Properties['ExecutablePath'])      { $data['executable_path'] = $c.ExecutablePath; if ($c.ExecutablePath) { [void](Add-FlaggedFile -Path ([string]$c.ExecutablePath)) } }
             if ($c.PSObject.Properties['ScriptText'])          { $data['script_text'] = $c.ScriptText }
             if ($c.PSObject.Properties['ScriptingEngine'])     { $data['scripting_engine'] = $c.ScriptingEngine }
             $records.Add((New-EvidenceRecord -ArtifactType 'wmi_event_consumer' -Collector 'Collect-WmiPersistence' `

@@ -82,6 +82,26 @@ function Get-HHFileEvidence {
     return $result
 }
 
+function Test-HHSuspectImage {
+    <#
+    .SYNOPSIS
+        Collector-side "is this image worth capturing" heuristic for the bounded flagged-file set
+        (CGD-CA-DESIGN-001 section 10.2). True when the image is unsigned/unknown-signature OR lives
+        outside the standard Windows/Program Files trees. Signed binaries inside system dirs are the
+        benign common case and are skipped so the capture budget is spent on high-risk files. The
+        hard bounds (size/count/eligibility/mode) are enforced separately by Add-FlaggedFile.
+    #>
+    param($Ev)
+    if (-not $Ev -or -not $Ev.exists) { return $false }
+    if ($Ev.signed -ne $true) { return $true }   # unsigned or unverifiable signature -> capture
+    $p = ([string]$Ev.path).ToLowerInvariant()
+    if (-not $p) { return $false }
+    $roots = @($env:SystemRoot, ${env:ProgramFiles}, ${env:ProgramFiles(x86)}) |
+        Where-Object { $_ } | ForEach-Object { $_.ToLowerInvariant() }
+    foreach ($r in $roots) { if ($p.StartsWith($r)) { return $false } }
+    return $true   # signed but outside system/program trees -> still worth a look
+}
+
 function Read-HHFileBytesShared {
     <#
     .SYNOPSIS

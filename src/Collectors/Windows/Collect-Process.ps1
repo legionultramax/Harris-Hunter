@@ -45,6 +45,7 @@ function Collect-Process {
         $imagePath = $p.ExecutablePath
         if (-not $imagePath -and $p.CommandLine) { $imagePath = Resolve-HHImagePath -CommandLine $p.CommandLine }
         $ev = Get-HHFileEvidence -Path $imagePath
+        if (Test-HHSuspectImage -Ev $ev) { [void](Add-FlaggedFile -Path $ev.path -KnownSha256 $ev.sha256) }
 
         $attack = @()
         if ($p.CommandLine -match '(?i)\b(powershell|pwsh|cmd|wscript|cscript|mshta|rundll32|regsvr32)\b') { $attack += 'T1059' }

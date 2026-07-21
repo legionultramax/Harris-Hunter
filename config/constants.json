@@ -20,7 +20,14 @@
     "security_logon": [4624, 4625, 4634, 4647, 4648, 4672, 4720, 4726, 4728, 4732, 4756, 4768, 4769, 4776]
   },
   "collector_timeout_seconds": 300,
-  "json_depth": 12
+  "json_depth": 12,
+  "evidence_capture": {
+    "enabled": true,
+    "max_file_bytes": 33554432,
+    "max_total_bytes": 268435456,
+    "max_files": 512,
+    "script_extensions": [".ps1", ".psm1", ".psd1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".bat", ".cmd", ".sh", ".py", ".pl", ".rb", ".php", ".hta", ".jar", ".lnk"]
+  }
 }
 
 

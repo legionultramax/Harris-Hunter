@@ -36,7 +36,8 @@ function Invoke-HaarisHunter {
     # --- Logging + custody ---
     Initialize-HHLogging -OutputPath $OutputPath -MinLevel $LogLevel
     Initialize-ChainOfCustody -OutputPath $OutputPath
-    Initialize-EvidenceFiles -OutputPath $OutputPath
+    $capturePolicy = if ($config.Constants.Contains('evidence_capture')) { $config.Constants['evidence_capture'] } else { $null }
+    Initialize-EvidenceFiles -OutputPath $OutputPath -CapturePolicy $capturePolicy -CollectionMode $config.CollectionMode
     # Clear per-run collector caches so repeated Invokes in one session never serve stale hashes.
     if (Get-Command Reset-HHFileEvidenceCache -ErrorAction SilentlyContinue) { Reset-HHFileEvidenceCache }
 
