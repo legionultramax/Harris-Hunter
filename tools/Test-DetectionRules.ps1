@@ -34,9 +34,32 @@ Write-Host "HAARIS-HUNTER detection-rule CI"
 Write-Host "PowerShell $($PSVersionTable.PSVersion)"
 
 # --- 1. Compile + lint -----------------------------------------------------------------------
-Write-Host "`n[1] Compile Sigma pack"
-$compileRes = & (Join-Path $repoRoot 'tools/Convert-SigmaPack.ps1') -Quiet
+# Compile to a TEMP dir, never the committed compiled/ tree: Convert-SigmaPack stamps a wall-clock
+# compiled_at and its ConvertTo-Json formatting/line-endings differ across PowerShell versions, so
+# compiling into the committed dir dirtied git on every CI run. We instead verify (a) the pack
+# compiles and (b) the committed artifacts are semantically in sync with source (below).
+Write-Host "`n[1] Compile Sigma pack (to a temp dir; committed artifacts are left untouched)"
+$tmpCompiled = Join-Path ([IO.Path]::GetTempPath()) ("hh_sigma_" + [guid]::NewGuid().ToString('N'))
+$compileRes = & (Join-Path $repoRoot 'tools/Convert-SigmaPack.ps1') -OutDir $tmpCompiled -Quiet
 Assert-Rule "sigma pack compiles (>=1 rule, 0 failures)" ($compileRes.Compiled -ge 1 -and $compileRes.Failed -eq 0) "compiled=$($compileRes.Compiled) failed=$($compileRes.Failed)"
+
+# Committed compiled rules must match a fresh compile of the source (a build step - drift means
+# stale artifacts). Compared semantically: parse both and re-serialize on THIS runtime with the
+# volatile compiled_at removed, so version-specific JSON formatting/line-endings do not matter.
+$committedCompiled = Join-Path $repoRoot 'config/detection/rules/compiled'
+function Get-HHRuleFingerprint { param([string]$File)
+    $o = Get-Content -LiteralPath $File -Raw | ConvertFrom-Json
+    if ($o.PSObject.Properties['compiled_at']) { $o.PSObject.Properties.Remove('compiled_at') }
+    return ($o | ConvertTo-Json -Depth 20 -Compress)
+}
+$inSync = $true; $syncDetail = ''
+foreach ($tf in @(Get-ChildItem -LiteralPath $tmpCompiled -Filter '*.json' -File)) {
+    $cf = Join-Path $committedCompiled $tf.Name
+    if (-not (Test-Path -LiteralPath $cf)) { $inSync = $false; $syncDetail = "committed $($tf.Name) missing"; break }
+    if ((Get-HHRuleFingerprint $tf.FullName) -ne (Get-HHRuleFingerprint $cf)) { $inSync = $false; $syncDetail = "committed $($tf.Name) is stale - run tools/Convert-SigmaPack.ps1"; break }
+}
+Assert-Rule "committed compiled rules are in sync with source" $inSync $syncDetail
+Remove-Item -LiteralPath $tmpCompiled -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host "`n[2] Lint compiled rules"
 $compiledDir = Join-Path $repoRoot 'config/detection/rules/compiled'
