@@ -17,7 +17,7 @@ Runs on **Windows PowerShell 5.1 and PowerShell 7+** (no install on stock Window
 |---|---|
 | **Core Framework** | Complete — schema, config, authorization gate, logging + SHA-256, hash-chained chain-of-custody + time integrity, statistics, evidence writer (+ AES), evidence-file sink |
 | **Windows collectors** | 16 collectors — verified on a live host (deep run re-verifies); autostart coverage broadened (AppInit/AppCert/Active Setup/Startup folders/print monitors/screensaver) |
-| **Linux collectors** | 18 collectors — built + parse-clean; **field-test pending** (dev host had no Linux runtime) |
+| **Linux collectors** | 19 collectors — **field-verified on WSL2 Ubuntu**: full `deep` run completes clean (19/19, 0 failed/skipped, bundle re-verifies), ClamAV detects EICAR end-to-end. Every filesystem/tool walk is mount-bounded (`-xdev`, local-fs only) and `timeout`-guarded |
 | **Detection engine (Phase 2)** | **Sigma engine delivered** — normalize → Sigma → risk score → `finding.v1` + ATT&CK-heatmap report, read-only over a sealed bundle. IOC / native-DSL / behavioral / ClamAV deferred to later increments |
 | **Framework verifier** | `tools/Verify-Framework.ps1` — **45/45 checks, exit 0** on PS 5.1 (OS-neutral); `tools/Test-DetectionRules.ps1` — rule-lint + fixtures, **10/10** |
 
@@ -211,6 +211,7 @@ schema, chain-of-custody, evidence-file sink, and reporting are shared with Wind
 | Filesystem | tmp/var-tmp/dev-shm + world-writable files | T1204, T1222 |
 | MemoryHints | /proc/meminfo, swaps, kcore (pointers, not capture) | — |
 | Containers | docker/podman ps | T1610, T1611 |
+| ClamAV | anti-malware scan (§9): signature-staleness gate, targeted high-risk-path scan, resource-guarded, **non-destructive**; emits detections + scan summary, folds scan log into bundle | — |
 
 > **Field-test status:** the Linux collectors are built and parse-clean but were authored on a
 > Windows host with no Linux runtime, so they are **not yet functionally verified**. Validate on a
