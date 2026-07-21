@@ -149,6 +149,9 @@ function Read-HHFileHeaderBytes {
             $buf = New-Object byte[] $n
             $off = 0
             while ($off -lt $n) { $r = $fs.Read($buf, $off, $n - $off); if ($r -le 0) { break }; $off += $r }
+            if ($off -le 0) { return $null }
+            # NB: a 1-element return unrolls to a bare [byte] (no .Length); the caller wraps this in
+            # @() so header inspection is always array-safe (a 1-byte file used to throw here).
             if ($off -lt $n) { return $buf[0..($off - 1)] }
             return $buf
         } finally { $fs.Dispose() }
@@ -166,7 +169,7 @@ function Test-HHCaptureEligible {
     param([Parameter(Mandatory)][string]$Path, $Policy)
     if (-not $Policy) { $Policy = Get-HHNormalizedCapturePolicy -Raw $null }
 
-    $hdr = Read-HHFileHeaderBytes -Path $Path -Count 4
+    $hdr = @(Read-HHFileHeaderBytes -Path $Path -Count 4)   # @() so .Length/index is always safe
     if ($hdr -and $hdr.Length -ge 2) {
         if ($hdr[0] -eq 0x4D -and $hdr[1] -eq 0x5A) { return $true }   # MZ  -> PE (exe/dll/sys/scr)
         if ($hdr[0] -eq 0x23 -and $hdr[1] -eq 0x21) { return $true }   # #!  -> script shebang
